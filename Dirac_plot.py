@@ -1,11 +1,6 @@
 #!/usr/bin/env python
 
 
-####
-#   I ADDED IN THIS LINE TO MAKE SURE EVERYTHING IS WORKING PROPERLY
-####
-
-
 
 from matplotlib.typing import LineStyleType
 import numpy as np
@@ -188,31 +183,41 @@ def Fermi_Analytical(Ee):
 #### g_kappa comparison
 
 
-def gk_analytic(Ee,r):
-    out = np.empty_like(Ee, dtype = float)
+def B_wavefuncs_analytic(Ee,r):
+    out_g = np.empty_like(Ee, dtype = float)
+    out_f = np.empty_like(Ee, dtype = float)
+
+    kappa_g = -1
+    kappa_f = 1
+
 
     for i , E in enumerate(Ee):
         p = np.sqrt(E**2 - me**2)
-        # p = np.sqrt((E-me) * (E-me + 2*c**2))/c
         eta = alpha* Z* E/ p
-        gammak = np.sqrt(kappa** 2 - (alpha * Z)**2)
+        gammak = np.sqrt(1 - (alpha * Z)**2)
 
         numerator = np.abs(sp.gamma(1 + gammak + 1j * eta))
         denominator = sp.gamma(1 + 2 * gammak)
         gamma_ratio = numerator/denominator
 
-        sqrt_term = np.sqrt((E + me)/ (2 * E))
+        sqrt_term_plus = np.sqrt((E + me) / (2 * E))
+        sqrt_term_min = np.sqrt((E - me) / (2 * E))
 
-        exp_zeta = np.sqrt((kappa - 1j * eta * me/E) / (gammak - 1j * eta))
+        exp_zeta_g = np.sqrt((kappa_g - 1j * eta * me/E) / (gammak - 1j * eta))
+        exp_zeta_f = np.sqrt((kappa_f - 1j * eta * me/E) / (gammak - 1j * eta))
 
 
         hyp = mp.hyp1f1(gammak - 1j*eta, 1 + 2*gammak, -2*1j*p*r)
-        Im_term = np.imag(np.exp(1j*p*r) * exp_zeta * hyp )
+        Im_term = np.imag(np.exp(1j*p*r) * exp_zeta_g * hyp )
+        Re_term = np.real(np.exp(1j*p*r) * exp_zeta_f * hyp)
 
-        out[i] = np.sign(kappa) * 1.0/(p*r) * sqrt_term * gamma_ratio * (2*p*r)**gammak * np.exp(np.pi * eta/2) * Im_term
+        out_g[i] = np.sign(kappa_g) * 1.0/(p*r) * sqrt_term_plus * gamma_ratio * (2*p*r)**gammak * np.exp(np.pi * eta/2) * Im_term
+        out_f[i] = np.sign(kappa_f) * 1.0/(p*r) * sqrt_term_min * gamma_ratio * (2*p*r)**gammak * np.exp(np.pi * eta/2) * Re_term
 
-    return out
+    return out_g, out_f
 
+
+#### SCHEME B
 Ee = T_MeV + me
 p_au = np.sqrt(T_n * (T_n + 2*c**2))/c
 g_n = abs((P_n[:, idx_R]))/mesh_point_R_au
@@ -224,7 +229,12 @@ f_B = np.sqrt((Ee + me)/(2*Ee)) * Q_p[:,idx_R] / (p_au * mesh_point_R_au)
 
 Fermi_B = 2/(s+1)*(g_B**2 + f_B **2)
 
+gB_analytic , fB_analytic = B_wavefuncs_analytic(Ee, R_simkovic)
+####
 
+
+
+#### SCHEMA A
 g_A = np.sqrt((Ee + me)/(2*Ee)) * P_n1[:,idx_R] /(p_au * mesh_point_R_au)
 f_A = np.sqrt((Ee + me)/(2*Ee)) * Q_p1[:,idx_R] / (p_au * mesh_point_R_au)
 
@@ -239,17 +249,21 @@ Simkovic_gk_A = np.sqrt(Fermi_Analytical(Ee)) * np.sqrt((Ee + me)/(2*Ee))
 
 plt.figure(figsize = (12,8))
 # plt.plot(T_MeV, g_n, marker = "o", linestyle = "-", label = r"$g_{\kappa=-1}(R)$")
-plt.plot(T_MeV, gk_analytic(T_MeV + me, R_simkovic), lw = 2.0 ,label = "Simkovic g_{-1}B")
+plt.plot(T_MeV, gB_analytic, lw = 2.0 ,label = "Simkovic g_{-1}B")
 plt.plot(T_MeV, abs(g_B), linestyle = "--", lw= 2.0 ,label = "g_B")
 
-plt.plot(T_MeV, abs(g_A), linestyle = "--", lw = 2.0, label = "g_A")
-plt.plot(T_MeV, Simkovic_gk_A, lw = 2.0, label = "Simkovic g_{-1}A")
+plt.plot(T_MeV, fB_analytic, lw = 2.0 , label = "Simkovic f_{-1}B")
+plt.plot(T_MeV, abs(f_B), linestyle = "--" , lw = 2.0 , label = "f_B")
+
+
+# plt.plot(T_MeV, abs(g_A), linestyle = "--", lw = 2.0, label = "g_A")
+# plt.plot(T_MeV, Simkovic_gk_A, lw = 2.0, label = "Simkovic g_{-1}A")
 
 
 plt.xlim(T_MeV[0], T_MeV[-1])
 plt.ylim(0,20)
 plt.xscale("log")
-plt.title("eta = -alpha*Z*W/(k*c)")
+plt.title(r"Analytic vs Numeric reduced wavefunction $g_{-1}$ & $f_{+1}$ comparison")
 plt.xlabel(r"$T$ (Mev)")
 plt.ylabel(r"$g_{\kappa=-1}(R)$")
 plt.grid(True)
