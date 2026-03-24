@@ -1,5 +1,12 @@
 #!/usr/bin/env python
 
+
+####
+#   I ADDED IN THIS LINE TO MAKE SURE EVERYTHING IS WORKING PROPERLY
+####
+
+
+
 from matplotlib.typing import LineStyleType
 import numpy as np
 import matplotlib.pyplot as plt
