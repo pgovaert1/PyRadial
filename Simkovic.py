@@ -30,7 +30,7 @@ rN = 1.2 * A ** (1 / 3) / hbar_c # Nuclear radius
 Q = 2.45791 # MeV Q-value for 136Xe
 Tlit = 2.19e21 # yr half-life
 au = 5.29177210903e-11 #Bohr radius
-
+c = 137.03599
 
 
 
@@ -76,23 +76,37 @@ Fermi_valsA = abs((P_nA[:, idx_R]**2 + Q_pA[:, idx_R]**2) / (P_n_V0A[:, idx_R]**
 
 
 
+
 E_hatree = 27.211386
 T_MeV = T_n * E_hatree/1e6
 
+Ee = T_MeV + me
+p_au = np.sqrt(T_n * (T_n + 2*c**2))/c
+
+s = np.sqrt(1-(Z/A)**2)
+
+g_B = np.sqrt((Ee + me)/(2*Ee)) * P_n[:,idx_R] /(p_au * mesh_point_R_au)
+f_B = np.sqrt((Ee + me)/(2*Ee)) * Q_p[:,idx_R] / (p_au * mesh_point_R_au)
+
+Fermi_B = (g_B**2 + f_B**2)
 
 print(f"T range numerical: ", T_MeV[0], T_MeV[-1])
 print(f"1st 5 Fermi vals:", Fermi_vals[:5])
 Ee_grid = T_MeV + me
 
+
+F_interp = interp1d(Ee_grid, Fermi_B, kind = "cubic", bounds_error = False, fill_value = "extrapolate")
+
 def Fermi_numerical(Ee):
-    s = np.sqrt(1-(56/137)**2)
+    s = np.sqrt(1-(Z/A)**2)
     Ee = np.asarray(Ee, dtype = float)
     T = Ee - me
 
     out = np.empty_like(T, dtype = float)
 
 
-    return 2/(s+1) * np.interp(T, T_MeV, Fermi_vals)
+    return 2/(s+1) * np.interp(T, T_MeV, Fermi_B)
+    # return F_interp(Ee) ### F_interp is smooth maar wijkt meer af??
 
 #### END MY CODE
 

@@ -314,7 +314,7 @@ fig, (ax1, ax2) = plt.subplots(2 , 1, figsize =(12,8) , sharex = True, gridspec_
 
 ax1.plot(T_MeV[:], Fermi[:], marker = "o", linestyle = "-", label = f"Numerical B @ R = {mesh_point_R_au: .5g}")
 ax1.plot(T_MeV[:], F_analytic[:], label = "Saad ")
-ax1.plot(T_MeV, Fermi_B, label = f"Fermi B @ R = {mesh_point_R_au: .5g}")
+ax1.plot(T_MeV, Fermi_B, label = f"Fermi_B f&g  @ R = {mesh_point_R_au: .5g}")
 
 
 # ax1.plot(T_MeV, Fermi_A, label = f"Fermi A @ R = {mesh_point_R_au: .5g}")
