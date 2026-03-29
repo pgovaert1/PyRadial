@@ -65,6 +65,7 @@ def save_run_npz(filename, label, r, P):
 ###################################
 ###Setup Cubic Spline potential V
 ###################################
+
 #### TODO Now i need to manualy change the potential function, how do i want to handle this? Pre-program potential functions and let user select them via number menu?
 N_V = 50000
 V0 = 1
@@ -831,7 +832,8 @@ def Visualize(Analytic_normalization_const, T, k, eta, W):
     plt.plot(mesh_points, wave_function_lower*N , label = "Q(r) - Normalized")
     plt.plot(r_analytic, P_analytic, ls = "--" , label = "Analytical mpmath sol P(r)")
     plt.plot(r_analytic, Q_analytic, ls = "--" , label = "Analytical mpmath sol Q(r)")
-    plt.axvline(x = R_au, color = "gray" , ls = "--")
+    plt.axvline(x = R_au, color = "gray" , ls = "--", label = f"r = {R_au}")
+    plt.axvline(x = r_c, color = "black", ls = "--", label = f"rc = {r_c}")
 
     plt.xlabel("r in a.u")
     plt.ylabel("P(r)")
@@ -898,7 +900,7 @@ def Obtain_Fermi_Data(Energy_range):
 
 
 #### Setting up and calling Visualize() function
-T =  1e-4 * 1e6 / E_hatree
+T = 2 * 1e6 / E_hatree
 W = T + c**2
 k = np.sqrt(T*(T + 2*c**2))/c
 eta =  alpha* Z *W/(k*c)
