@@ -3,3 +3,5 @@
 
 # Ignore directories
 out/
+
+__pycache__
