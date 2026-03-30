@@ -9,6 +9,7 @@ from scipy.interpolate import interp1d
 from scipy.optimize._lsq.lsq_linear import TERMINATION_MESSAGES
 import scipy.special as sp
 import mpmath as mp
+import os
 
 
 E_hatree = 27.211386 #eV
@@ -40,11 +41,12 @@ print(f"R (a.u) = {R_au}")
 print(f"V(R_au) = {potential(R_au)}")
 
 
-def load_data(name):
-    npz_file = name
+def load_data(directory_name, file_name):
 
-    data = np.load(npz_file)
+    full_path = os.path.join(directory_name, file_name)
+    data = np.load(full_path)
 
+    print(f"loading file from {full_path}")
 
     T = data["T"]
     r = data["r"]
@@ -53,53 +55,25 @@ def load_data(name):
     return T, r, P, Q
 
 
-T_n, r_n, P_n, Q_n = load_data("Dirac_run_kappa_n_schemeB_V_Z56.npz")
-T_n_V0, r_n_V0, P_n_V0, Q_n_V0 = load_data("Dirac_run_kappa_n_schemeB_V0.npz")
-T_p, r_p, P_p, Q_p = load_data("Dirac_run_kappa_p_schemeB_V_Z56.npz")
-T_p_V0, r_p_V0, P_p_V0, Q_p_V0 = load_data("Dirac_run_kappa_p_schemeB_V0.npz")
+T_n, r_n, P_n, Q_n = load_data("out", "potential_0_kappa_-1.npz")
+T_n_V0, r_n_V0, P_n_V0, Q_n_V0 = load_data("out", "Dirac_run_kappa_n_schemeB_V0.npz")
+T_p, r_p, P_p, Q_p = load_data("out", "potential_0_kappa_+1.npz")
+T_p_V0, r_p_V0, P_p_V0, Q_p_V0 = load_data("out", "Dirac_run_kappa_p_schemeB_V0.npz")
 
-T_n1, r_n1, P_n1, Q_n1 = load_data("Dirac_run_kappa_n_schemeA_V_Z56.npz")
-T_n_V01, r_n_V01, P_n_V01, Q_n_V01 = load_data("Dirac_run_kappa_n_schemeA_V0.npz")
-T_p1, r_p1, P_p1, Q_p1 = load_data("Dirac_run_kappa_p_schemeA_V_Z56.npz")
-T_p_V01, r_p_V01, P_p_V01, Q_p_V01 = load_data("Dirac_run_kappa_p_schemeA_V0.npz")
+T_n1, r_n1, P_n1, Q_n1 = load_data("out", "Dirac_run_kappa_n_schemeA_V_Z56.npz")
+T_n_V01, r_n_V01, P_n_V01, Q_n_V01 = load_data("out", "Dirac_run_kappa_n_schemeA_V0.npz")
+T_p1, r_p1, P_p1, Q_p1 = load_data("out", "Dirac_run_kappa_p_schemeA_V_Z56.npz")
+T_p_V01, r_p_V01, P_p_V01, Q_p_V01 = load_data("out", "Dirac_run_kappa_p_schemeA_V0.npz")
 
 
 T_MeV = T_n * E_hatree/1e6
 
 
-aT_n, ar_n, aP_n, aQ_n = load_data("Analytic_Coulomb_kappa_n_V_Z56.npz")
-aT_n_V0, ar_n_V0, aP_n_V0, aQ_n_V0 = load_data("Analytic_Coulomb_kappa_n_V0.npz")
-aT_p, ar_p, aP_p, aQ_p = load_data("Analytic_Coulomb_kappa_p_V_Z56.npz")
-aT_p_V0, ar_p_V0, aP_p_V0, aQ_p_V0 = load_data("Analytic_Coulomb_kappa_p_V0.npz")
+aT_n, ar_n, aP_n, aQ_n = load_data("out", "Analytic_Coulomb_kappa_n_V_Z56.npz")
+aT_n_V0, ar_n_V0, aP_n_V0, aQ_n_V0 = load_data("out", "Analytic_Coulomb_kappa_n_V0.npz")
+aT_p, ar_p, aP_p, aQ_p = load_data("out", "Analytic_Coulomb_kappa_p_V_Z56.npz")
+aT_p_V0, ar_p_V0, aP_p_V0, aQ_p_V0 = load_data("out", "Analytic_Coulomb_kappa_p_V0.npz")
 
-
-
-Fortran_x = [
-    7.4045963689e-04, 9.7931438035e-04, 1.2952184354e-03, 1.7130255935e-03,
-    2.2656074811e-03, 2.9964389133e-03, 3.9630199977e-03, 5.2413973063e-03,
-    6.9321495640e-03, 9.1682996313e-03, 1.2125780003e-02, 1.6037272520e-02,
-    2.1210521632e-02, 2.8052544364e-02, 3.7101636356e-02, 4.9069748146e-02,
-    6.4898502537e-02, 8.5833255819e-02, 1.1352103155e-01, 1.5014026446e-01,
-    1.9857201445e-01, 2.6262669191e-01, 3.4734381830e-01, 4.5938887707e-01,
-    6.0757718718e-01, 8.0356719484e-01, 1.0627790483e+00, 1.4056068650e+00,
-    1.8590228428e+00, 2.4587000204e+00
-]
-
-Fortran_y = [
-    1.3088801778e+02, 1.1383543144e+02, 9.9010968359e+01, 8.6124454479e+01,
-    7.4923641685e+01, 6.5189273322e+01, 5.6730780664e+01, 4.9382548386e+01,
-    4.3000662550e+01, 3.7460083005e+01, 3.2652203890e+01, 2.8482808111e+01,
-    2.4870420679e+01, 2.1745002527e+01, 1.9046790421e+01, 1.6724985953e+01,
-    1.4736105928e+01, 1.3042079344e+01, 1.1608431030e+01, 1.0402921997e+01,
-    9.3948201226e+00, 8.5547281759e+00, 7.8547494556e+00, 7.2687901180e+00,
-    6.7728786533e+00, 6.3454618457e+00, 5.9676545027e+00, 5.6233945998e+00,
-    5.2994327425e+00, 4.9851067449e+00
-]
-
-
-
-Simkovic_paper_x= [0.00010181995439284004, 0.00011482916831344526, 0.00012642346121318789, 0.00014430086335830004, 0.000165699481263457, 0.00019607769749551714, 0.000247888211840957, 0.0003096432511816367, 0.00039146171555687044, 0.0005069449901306541, 0.0006971753711517342, 0.0008761102204861905, 0.001087811197113462, 0.0014087212482585282, 0.0018913086206379759, 0.002554528221431459, 0.0033280758176176426, 0.004414775423147398, 0.005927150475157031, 0.007675691184403614, 0.00988048055700296, 0.013506670426795632, 0.01802497510742809, 0.023202524933686915, 0.029157612383677534, 0.03753293551347307, 0.04495122322394991, 0.05962891664876913, 0.0886708106383785, 0.07403749172824403, 0.11976474157693831, 0.17075600248213096, 0.2348319476955167, 0.3004739239131386, 0.3753293551347309, 0.5161711577478199, 0.7013793942000445, 0.8867081063837855, 1.121007078948298, 1.4960107898396027, 1.9490242036826286, 2.419981302163716]
-Simkovic_paper_y = [0.18170019467878, 0.18948734587929913, 0.1946787800129786, 0.21025308241401686, 0.21544451654769628, 0.2206359506813757, 0.24140168721609342, 0.2569759896171317, 0.26476314081765084, 0.290720311486048, 0.31667748215444513, 0.33484750162232313, 0.3530175210902011, 0.37897469175859827, 0.40752757949383517, 0.4412719013627514, 0.4516547696301103, 0.4879948085658663, 0.5191434133679429, 0.563270603504218, 0.6048020765736535, 0.6385463984425698, 0.6826735885788449, 0.7319922128487995, 0.7735236859182348, 0.8254380272550291, 0.8695652173913043, 0.9162881245944191, 1.0045425048669694, 0.9682024659312134, 1.0694354315379624, 1.136924075275795, 1.2147955872809864, 1.2615184944841011, 1.318624269954575, 1.3575600259571705, 1.427644386761843, 1.4561972744970797, 1.4951330304996755, 1.5236859182349123, 1.5314730694354315, 1.5314730694354315]
 
 idx_R = a_idx_R = 0
 mesh_point_R_au = a_mesh_point_R_au = 0
@@ -371,7 +345,6 @@ fig, (ax1, ax2) = plt.subplots(2 , 1, figsize =(12,8) , sharex = True, gridspec_
 # ax1.plot(T_MeV[:], Fermi[:], marker = "o", linestyle = "-", label = f"Numerical B @ R = {mesh_point_R_au: .5g}")
 ax1.plot(T_MeV[:], F_analytic[:], label = "Saad ")
 ax1.plot(T_MeV, Fermi_B, label = f"Fermi_B f&g  @ R = {mesh_point_R_au: .5g}")
-ax1.plot(Fortran_x,Fortran_y, label = "FORTRAN")
 
 
 # ax1.plot(T_MeV, Fermi_A, label = f"Fermi A @ R = {mesh_point_R_au: .5g}")

@@ -19,8 +19,13 @@
 	"T_plot_energy-MeV": 0.5,
 	"T_end-MeV": 2.45791,
 	"T_start-MeV": 1e-4,
-	"num_samples": 30,
-	"output_file": "Test.npz",
-	"output_directory": "out"
-	}
+	"num_samples": 30
+	},
+
+"paths":{
+        "output_file": "Test.npz",
+	"output_results_file": "results.txt",
+	"plot_directory": "plots",
+        "output_directory": "out"
+        }
 }
