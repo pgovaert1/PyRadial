@@ -4,6 +4,7 @@
 import json
 import argparse
 from Dirac_numerical_radial import Visualize, Generate_Fermi_Data
+from Simkovic import Calc_double_beta_decay_spectrum
 
 def positive_float(value):
     val = float(value)
@@ -17,24 +18,23 @@ def positive_int(value):
         raise argparse.ArgumentTypeError("Number of energy samples must be more than 0")
     return val
 
-def clean_filename(name):
+def clean_name(name):
     name = name.strip()
-
     name = name.replace(" ", "_")
-
-    if not name.endswith(".npz"):
-        name += ".npz"
     return name
+
 
 def main():
     parser = argparse.ArgumentParser()
 
     #Generator parses
-    parser.add_argument("--mode", type = str, choices=["generate", "plot"],  help = "'generate' or 'plot'")
+    parser.add_argument("--mode", type = str, choices=["generate", "plot", "data"],  help = "'generate' or 'plot' or 'data'")
     parser.add_argument("--num_samples", type = positive_int, help = "number of energy samples generated")
     parser.add_argument("--plot_energy", type = positive_float, help = "Kinetic energy in MeV for single plot")
-    parser.add_argument("--output_file", type = str , help = "output filename")
     parser.add_argument("--potential", type = int, choices = [0,1,2], help = "Select potential function, 0: Z/r , 1: Z/r + V0 exp(-Ar) 2: (for r<R); Z/2R (3-(r/R)^2) (for r >= R); Z/r ")
+
+    #Paths parses
+    parser.add_argument("--output_dir", type = str, help = "Output directory name with standard: /out")
 
     #Parameter parses
     parser.add_argument("--atomic_num", type = positive_int, help = "Atomic number (Z) given as posivite integer value")
@@ -59,13 +59,14 @@ def main():
     if args.plot_energy is not None:
         config["generator"]["T_plot_energy-MeV"] = args.plot_energy
 
-    if args.output_file is not None:
-        config["generator"]["output_file"] = clean_filename(args.output_file)
-
     if args.potential is not None:
         config["generator"]["potential_index"] = args.potential
-    #Parameter overrides
 
+   #Paths overrides
+    if args.output_dir is not None:
+        config["paths"]["output_directory"] = clean_name(args.output_dir)
+
+   #Parameter overrides
     if args.atomic_num is not None:
         config["parameters"]["atomic_number"] = args.atomic_number
 
@@ -92,12 +93,14 @@ def main():
     if potential == 2:
         print(f"calling '{mode}' function for potential 2: (for r<R); Z/2R (3-(r/R)^2) (for r >= R); Z/r")
 
-    #TODO make it so the output data is also immidiately handled or can be extracted from the out directory to plot it and whatsover
+
     if mode == "generate":
-        print(f"Saving data to {clean_filename(args.output_file)}")
+        print(f"Saving output in {clean_name(args.output_dir)} directory")
         Generate_Fermi_Data(config)
     elif mode == "plot":
         Visualize(config)
+    elif mode == "data":
+        Calc_double_beta_decay_spectrum(config)
     else:
         raise ValueError("Unkown mode: {mode}")
 

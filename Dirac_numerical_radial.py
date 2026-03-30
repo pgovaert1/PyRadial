@@ -950,12 +950,11 @@ def Generate_Fermi_Data(config):
     r_arr = np.asarray(mesh_points, dtype = float)
     T_arr = np.asarray(T_range, dtype = float)
 
-    output_file_name = config["generator"]["output_file"]
-    output_directory_name = config["generator"]["output_directory"]
+    filename = f"potential_{potential_index}_kappa_{kappa:+d}.npz"
 
-    output_directory = Path(output_directory_name)
+    output_directory = Path(config["paths"]["output_directory"])
     output_directory.mkdir(parents=True, exist_ok=True)
-    file_path = output_directory / output_file_name
+    file_path = output_directory / filename
 
     np.savez_compressed(file_path, T = T_arr, r = r_arr, P = P_arr, Q = Q_arr)
 

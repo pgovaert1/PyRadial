@@ -1,7 +1,8 @@
 #Ignore all npz files
 *.npz
-
+*.txt
 # Ignore directories
 out/
+plots/
 
 __pycache__
