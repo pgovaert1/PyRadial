@@ -1,0 +1,26 @@
+{
+"parameters":{
+	"mass_number": 136,
+	"atomic_number": 56,
+	"angular_momentum_l": 0,
+	"kappa": 1
+	},
+
+"mesh_grid":{
+	"num_mesh_steps": 300000,
+	"end_point": 25,
+	"second_point" : 1e-7,
+	"upper_limit_step_size": 1e-4
+	},
+
+"generator":{
+	"potential_index": 0,
+	"mode": "plot",
+	"T_plot_energy-MeV": 0.5,
+	"T_end-MeV": 2.45791,
+	"T_start-MeV": 1e-4,
+	"num_samples": 30,
+	"output_file": "Test.npz",
+	"output_directory": "out"
+	}
+}
