@@ -75,22 +75,44 @@ aT_p, ar_p, aP_p, aQ_p = load_data("out", "Analytic_Coulomb_kappa_p_V_Z56.npz")
 aT_p_V0, ar_p_V0, aP_p_V0, aQ_p_V0 = load_data("out", "Analytic_Coulomb_kappa_p_V0.npz")
 
 
-idx_R = a_idx_R = 0
-mesh_point_R_au = a_mesh_point_R_au = 0
-for i in range(0,len(r_n)):
-    if r_n[i] <= R_au  and r_n[i+1] > R_au:
-        mesh_point_R_au = r_n[i]
-        idx_R = i
-        print(f"Numeric: closest mesh point to R_au = {R_au: .5g} is at i ={idx_R} w/ mesh point value ={mesh_point_R_au: .5g}")
-        break
 
 
-for i in range(0,len(ar_n)):
-    if ar_n[i] <= R_au  and ar_n[i+1] > R_au:
-        a_mesh_point_R_au = ar_n[i]
-        a_idx_R = i
-        print(f"Analytic: closest mesh point to R_au = {R_au: .5g} is at i ={a_idx_R} w/ mesh point value ={a_mesh_point_R_au: .5g}")
-        break
+T_n3, r_n3, P_n3, Q_n3 = load_data("out", "potential_3_kappa_-1.npz")
+T_p3, r_p3, P_p3, Q_p3 = load_data("out", "potential_3_kappa_+1.npz")
+
+
+
+
+
+Scheme_Cgx = [0.00010092528860766844, 0.00011334438229710347, 0.00013085791612450995, 0.0001519147698447522, 0.0001763599633897995, 0.00020473872763416396, 0.0002470586136038433, 0.000303109815358405, 0.00040179081084894003, 0.0005355499708401138, 0.000682967440807964, 0.0009306791831626531, 0.0013551894123510365, 0.001995262314968879, 0.0029702978440178628, 0.004138090648167254, 0.0062287370894402875, 0.009069847815057921, 0.015332041990349142, 0.024524490860720193, 0.07741052270741218, 0.07741052270741218, 0.1158777356155125, 0.19806147089717377, 0.3908408957924017, 0.7099046158552872, 1.3477210138513502, 2.2532013356294827, 2.434445183692199]
+Scheme_Cgy = [17.841561423650976, 17.451205510907005, 16.831228473019518, 16.234213547646384, 15.591274397244547, 14.982778415614238, 14.270952927669347, 13.559127439724456, 12.640642939150403, 11.733639494833525, 10.964408725602755, 10.218140068886338, 9.265212399540758, 8.33524684270953, 7.531572904707233, 6.911595866819748, 6.199770378874857, 5.6371986222732495, 4.913892078071183, 4.316877152698049, 3.180252583237658, 3.180252583237658, 2.8702640642939152, 2.479908151549943, 2.101033295063146, 1.8484500574052813, 1.5958668197474168, 1.4351320321469576, 1.4351320321469576]
+
+
+Scheme_Cfx = [0.00009888846397011232, 0.0001563776769679538, 0.0002557213510616451, 0.00041352793657061903, 0.000668717545931981, 0.001307690155672795, 0.002325438478543525, 0.004348600531112699, 0.008456379525161753, 0.013372530349989442, 0.02859635498543255, 0.046502438616317705, 0.07819948330170486, 0.1462340619871048, 0.28756621691011724, 0.5142390449924272, 0.9195857504964805, 1.6261666439658746, 2.378009538150679]
+Scheme_Cfy = [3.4885404101326896, 3.1290711700844387, 2.769601930036188, 2.4632086851628467, 2.195416164053076, 1.8769601930036186, 1.6381182147165259, 1.4354644149577804, 1.2738238841978287, 1.189384800965018, 1.1194209891435463, 1.1121833534378769, 1.1314837153196622, 1.1917973462002411, 1.278648974668275, 1.3462002412545235, 1.4016887816646562, 1.430639324487334, 1.4209891435464415]
+
+
+def find_Rau(r_arr):
+    for i in range(0,len(r_arr)-1):
+        if r_arr[i] <= R_au  and r_arr[i+1] > R_au:
+            return i, r_arr[i]
+    raise RuntimeError("Could not find R_au")
+
+
+
+
+
+idx_R , mesh_point_R_au = find_Rau(r_n)
+print(f"numeric potential 0: closest mesh point to R_au = {R_au: .5g} is at i ={idx_R} w/ mesh point value ={mesh_point_R_au: .5g}")
+
+idx_R_3, mesh_point_R_au_3 = find_Rau(r_n3)
+print(f"numeric potential 3: closest mesh point to R_au = {R_au: .5g} is at i ={idx_R_3} w/ mesh point value ={mesh_point_R_au_3: .5g}")
+
+a_idx_R , a_mesh_point_R_au = find_Rau(ar_n)
+print(f"Analytic: closest mesh point to R_au = {R_au: .5g} is at i ={a_idx_R} w/ mesh point value ={a_mesh_point_R_au: .5g}")
+
+
+
 
 
 # Fermi_num = (P_n[:, idx_R]**2 * cos^2(delta)+ Q_p[:, idx_R]**2) * sin^2(delta)
@@ -229,7 +251,13 @@ f_B = np.sqrt((Ee + me)/(2*Ee)) * Q_p[:,idx_R] / (p_au * mesh_point_R_au)
 Fermi_B = 2/(s+1)*(g_B**2 + f_B **2)
 
 gB_analytic , fB_analytic = B_wavefuncs_analytic(Ee, R_simkovic)
-####
+
+#### SCHEME C
+
+g_C = np.sqrt((Ee + me)/(2*Ee)) * P_n3[:,idx_R_3] /(p_au * mesh_point_R_au_3)
+f_C = np.sqrt((Ee + me)/(2*Ee)) * Q_p3[:,idx_R_3] / (p_au * mesh_point_R_au_3)
+
+Fermi_C = 2/(s+1)*(g_C**2 + f_C **2)
 
 
 
@@ -240,31 +268,44 @@ Fermi_A = 2/(s+1) * (g_A**2 + f_A**2)
 
 
 
+
+
+
 #### g{-1} Scheme A
 
 Simkovic_gk_A = np.sqrt(Fermi_Analytical(Ee)) * np.sqrt((Ee + me)/(2*Ee))
 Simkovic_fk_A = np.sqrt(Fermi_Analytical(Ee)) * np.sqrt((Ee - me)/ (2*Ee))
 
 
-plt.figure(figsize = (12,8))
-# plt.plot(T_MeV, g_n, marker = "o", linestyle = "-", label = r"$g_{\kappa=-1}(R)$")
-# plt.plot(T_MeV, gB_analytic, lw = 2.0 ,label = "Simkovic g_{-1}B")
-# plt.plot(T_MeV, abs(g_B), linestyle = "--", lw= 2.0 ,label = "g_B")
-#
-# plt.plot(T_MeV, fB_analytic, lw = 2.0 , label = "Simkovic f_{-1}B")
-# plt.plot(T_MeV, abs(f_B), linestyle = "--" , lw = 2.0 , label = "f_B")
 
-# #
+#### PLOTTING g and f
+plt.figure(figsize = (12,8))
+#SCHEME B
+plt.plot(T_MeV, gB_analytic, lw = 2.0 ,label = "Simkovic g_{-1}B")
+plt.plot(T_MeV, abs(g_B), linestyle = "--", lw= 2.0 ,label = "g_B")
+
+plt.plot(T_MeV, fB_analytic, lw = 2.0 , label = "Simkovic f_{-1}B")
+plt.plot(T_MeV, abs(f_B), linestyle = "--" , lw = 2.0 , label = "f_B")
+
+#Scheme A
 # plt.plot(T_MeV, abs(g_A), linestyle = "--", color = "magenta" , lw = 2.0, label = "g_A")
 # plt.plot(T_MeV, Simkovic_gk_A, lw = 2.0, color = "dodgerblue",label = "Simkovic g_{-1}A")
 
-plt.plot(T_MeV, abs(f_A), ls= "--", lw = 2.0, label = "f_A" )
-plt.plot(T_MeV, Simkovic_fk_A, lw = 2.0, label = "Simkovic f_{+1} A")
+# plt.plot(T_MeV, abs(f_A), ls= "--", lw = 2.0, label = "f_A" )
+# plt.plot(T_MeV, Simkovic_fk_A, lw = 2.0, label = "Simkovic f_{+1} A")
 # plt.plot(Simkovic_paper_x , Simkovic_paper_y, lw = 2.0, label = "Simkovic paper")
+
+# # SCHEME C
+plt.plot(T_MeV, abs(g_C), linestyle = "--", color = "magenta" , lw = 2.0, label = "g_C")
+plt.plot(Scheme_Cgx, Scheme_Cgy, lw = 2.0, label = "Simkovic g_{-1} C")
+plt.plot(T_MeV, abs(f_C), ls= "--", lw = 2.0, label = "f_C" )
+plt.plot(Scheme_Cfx, Scheme_Cfy, lw = 2.0, label = "Simkovic f_{+1} C")
+
+
 
 
 plt.xlim(T_MeV[0], T_MeV[-1])
-plt.ylim(0,4)
+plt.ylim(0,20)
 plt.xscale("log")
 plt.title(r"Analytic vs Numeric reduced wavefunction $g_{-1}$ & $f_{+1}$ comparison")
 plt.xlabel(r"$T$ (Mev)")
@@ -278,6 +319,7 @@ plt.show()
 
 percent_diff_f_func = 100.0 * (abs(g_A) - Simkovic_gk_A)/ Simkovic_gk_A
 
+#### g vs g_simkovic COMPARSION
 
 fig, (ax1, ax2) = plt.subplots(2 , 1, figsize =(12,8) , sharex = True, gridspec_kw ={"height_ratios": [3, 1]})
 
@@ -338,7 +380,7 @@ percent_diff_B = 100.0 * (Fermi_B - F_analytic)/ F_analytic
 percent_diff_A = 100.0 * (Fermi_A - F_analytic) / F_analytic
 
 
-
+#### FERMI COMPARSION
 
 fig, (ax1, ax2) = plt.subplots(2 , 1, figsize =(12,8) , sharex = True, gridspec_kw ={"height_ratios": [3, 1]})
 

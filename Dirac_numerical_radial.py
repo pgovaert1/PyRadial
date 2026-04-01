@@ -4,7 +4,7 @@
 import json
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.interpolate import CubicSpline
+from scipy.interpolate import CubicSpline, interp1d
 from scipy.optimize import brentq
 import mpmath as mp
 import os
@@ -36,12 +36,76 @@ def save_run_npz(filename, label, r, P):
     np.savez_compressed(filename, **data)
 
 
+
+
+
+##################
+### Thomas-Fermi
+##################
+
+def solve_thomas_fermi(tsteps, Nmax, dps):
+    a = [1, 9 - np.sqrt(73)]
+
+
+    for m in range(2, Nmax):
+        a_temp = sum(a[m - n] * ((n + 1) * a[n + 1] - 2 * (n + 4) * a[n] + (n + 7) * a[n - 1])
+                    for n in range(1, m - 1))
+        a_temp += a[m - 1] * (m + 7 - 2 * (m + 3) * a[1])
+        a_temp += a[m - 2] * (m + 6) * a[1]
+        a.append(a_temp / (2 * (m + 8) - (m + 1) * a[1]))
+
+    k = Nmax -2
+
+    b = np.array([a[0]] + [a[n] - a[n - 1] for n in range(1, k + 1)])
+    c = np.array([a[0] - a[0]] + [b[n - 1] - b[n] for n in range(1, k + 1)])
+
+    P = np.poly1d(b[::-1])
+    Q = np.poly1d(c[::-1])
+
+    def I(t):
+        def mp_integrand(x):
+            x_float = float(x)
+            return mp.mpf(P(x_float)) / mp.mpf(Q(x_float))
+        return mp.quad(mp_integrand, [mp.mpf(1) - mp.mpf(t), mp.mpf(1)])
+
+    t_list = np.linspace(0, 0.99, tsteps)
+    I_list = np.array([I(t) for t in t_list])
+    I_list_float = np.array([float(val) for val in I_list])
+    x_vals = (144) ** (1/3) * t_list ** 2 * np.exp(2 * I_list_float)
+    phi_vals = np.exp(-6 * I_list_float)
+
+    idx = np.argsort(x_vals)
+    x_vals = x_vals[idx]
+    phi_vals = phi_vals[idx]
+
+    return x_vals, phi_vals
+
+
+def make_phi_x(tsteps, Nmax, dps):
+    x_vals, phi_vals = solve_thomas_fermi(tsteps, Nmax, dps)
+
+    phi_interp = interp1d(x_vals, phi_vals, kind ="linear", bounds_error=False, fill_value=(1.0, 0.0))
+
+    return phi_interp
+
+def make_phi_r(Z, tsteps=200, Nmax=100, dps=60):
+    phi_x = make_phi_x(tsteps, Nmax, dps)
+
+    b_au = 0.8853 * Z **(-1.0/3.0)
+
+    def phi_of_r(r_au):
+        r_arr = np.asarray(r_au, dtype=float)
+        x = r_arr / b_au
+        return phi_x(x)
+
+    return phi_of_r
+
+
 ###################################
 ###Setup Cubic Spline potential V
 ###################################
 
-#### TODO Add if statements for differnt tpy eof potentials and make sure user intput is defined in JSON and main.py
-def potential(r, Z, R_au, potential_index):
+def potential(r, Z, R_au, potential_index, phi_r):
     Z_sing = Z  ###Define the singular potential term which blows up at r ->0
 
     if potential_index == 0:
@@ -62,6 +126,18 @@ def potential(r, Z, R_au, potential_index):
             return float(V)
         else:
             return V
+
+    elif potential_index == 3:
+        r_arr = np.asarray(r, dtype =float)
+
+        V_A =  potential(r,Z,R_au, 2,0)
+        phi_vals = phi_r(r_arr)
+
+        V_C = ((r_arr * V_A + 2.0 ) * phi_vals - 2.0) / r_arr
+
+        if np.isscalar(r):
+            return float(V_C)
+        return V_C
 
     else:
         raise RuntimeError("No proper potential function idex number was selected")
@@ -135,24 +211,32 @@ def mesh_grid(r_N, N , r2, DRN):
 ### Calculate the potential parameters u0,u1,u2,u3 in accordance to RADIAL for the initial mesh step [0,rb]
 #############################################################################################################
 
-def Singular_Potential_Parameters_Dirac(r_b, T, Z, alpha, r0, R_au, potential_index):
+def Singular_Potential_Parameters_Dirac(r_b, T, Z, alpha, r0, R_au, potential_index, phi_r):
     h = r_b
     Z_sing = Z
-    def V_reg(r,Z):
-        if potential_index == 1:
-            return potential(r,Z, R_au, potential_index)
-        elif potential_index == 0 or potential_index == 2:
-            return potential(r, Z ,R_au, potential_index) - Z_sing / r
-        else:
-            raise RuntimeError("No proper potential potential_index selected")
+    # def V_reg(r,Z):
+    #     if potential_index == 0:
+    #         return potential(r,Z, R_au, potential_index, phi_r)
+    #     elif potential_index == 0 or potential_index == 2:
+    #         return potential(r, Z ,R_au, potential_index, phi_r) - Z_sing / r
+    #     else:
+    #         raise RuntimeError("No proper potential potential_index selected")
+    if potential_index == 0:
+        V_reg = lambda r: potential(r, Z, R_au, potential_index, phi_r) - Z_sing/r
+        u0 = alpha* Z_sing
+    elif potential_index in (1,2,3):
+        V_reg = lambda r: potential(r, Z, R_au, potential_index, phi_r)
+        u0 = 0.0
+    else:
+        raise RuntimeError("No proper potential potential_index selected")
 
-    v0 = float(V_reg(r0,Z))
+    v0 = float(V_reg(r0))
     dr = 1e-8
-    v1 = (V_reg(r0+dr,Z) - V_reg(r0-dr, Z)) / (2*dr)
-    v2 = (V_reg(r0+dr,Z) - 2*V_reg(r0,Z) + V_reg(r0-dr,Z)) / (dr**2)
+    v1 = (V_reg(r0+dr) - V_reg(r0-dr)) / (2*dr)
+    v2 = (V_reg(r0+dr) - 2*V_reg(r0) + V_reg(r0-dr)) / (dr**2)
     # v3 = (V_reg(r0 + 2*dr) - 3*V_reg(r0 + dr) + 3*V_reg(r0) - V_reg(r0 -dr))/ (dr**3)
 
-    u0 = 0 #alpha * Z_sing
+    # u0 = 0 #alpha * Z_sing
     u1 = alpha * h *(v0-T)
     u2 = alpha * h**2 * (v1)
     u3 = alpha * h**3 * (0.5*v2)
@@ -527,9 +611,9 @@ def Power_Series_Terms_Dirac(u_array, initial_condition_a, initial_condition_b ,
 ###calculate and stich toghether all the terms needed to solve the power series
 #################################################################################################
 
-def Calc_Series_Terms(mesh_steps, l ,epsilon, T, Z, alpha, kappa, c, sigma, r0, R_au, derivatives, potential_index, ratio_max = 0.05, max_subdiv = 200):
+def Calc_Series_Terms(mesh_steps, l ,epsilon, T, Z, alpha, kappa, c, sigma, r0, R_au, derivatives, potential_index, phi_r, ratio_max = 0.05, max_subdiv = 200):
 
-    u_parameters0 = Singular_Potential_Parameters_Dirac(mesh_steps[1], T, Z, alpha, r0, R_au, potential_index)
+    u_parameters0 = Singular_Potential_Parameters_Dirac(mesh_steps[1], T, Z, alpha, r0, R_au, potential_index, phi_r)
     Series_terms0a , Series_terms0b , initial_condition0a, initial_condition0b, s, t = Singular_Power_Series_Terms_Dirac(u_parameters0 ,mesh_steps[1] ,l ,epsilon ,Z ,kappa ,c ,sigma)
 
     initial_temp_condition_a = initial_condition0a
@@ -609,18 +693,21 @@ def Solve_Power_Series(list_of_sequence_terms_a, list_of_sequence_terms_b, grid_
 ### Find_rc is a function finding the matching radius rc at which one can normalize the power series by matching it witht he asymptotic behavior
 #################################################################################################################################################
 
-def Find_rc(r_mesh,k,epsilon, Z , R_au, potential_index):
+def Find_rc(r_mesh,k,epsilon, Z , R_au, potential_index, phi_r):
     kr_min = 20.0
     r_grid = np.asarray(r_mesh, dtype = float)
 
 
     r_safe = np.maximum(r_grid, 1e-16)
-    RV = r_safe * potential(r_safe, Z, R_au, potential_index)
+    RV = r_safe * potential(r_safe, Z, R_au, potential_index, phi_r)
 
-    r_infty = 1000
-    Z_inf = r_infty * potential(r_infty, Z, R_au, potential_index)
+    r_infty = 10000
+    Z_inf = r_infty * potential(r_infty, Z, R_au, potential_index, phi_r)
 
-    TAS = max(1e-11, epsilon) * abs(Z_inf)
+    if potential_index == 3:
+        TAS = 10e-4 * abs(Z_inf)
+    else:
+        TAS = max(1e-11, epsilon) * abs(Z_inf)
 
     idx_rc = None
     for idx in range(len(r_grid)-1 ,2, -1):
@@ -641,7 +728,7 @@ def Find_rc(r_mesh,k,epsilon, Z , R_au, potential_index):
 ### of wave functions by matching them at rc with their assymptotic behavior
 ###########################################################################################
 
-def Normalization_Constant(r_mesh, idx_rc, P_mesh, Q_mesh, Analytic_normalization_const, T, k, eta, W, kappa, Z, c, Lambda, sigma, epsilon, R_au, potential_index):
+def Normalization_Constant(r_mesh, idx_rc, P_mesh, Q_mesh, Analytic_normalization_const, T, k, eta, W, kappa, Z, c, Lambda, sigma, epsilon, R_au, potential_index, phi_r):
     P = P_mesh[idx_rc]
     Q = Q_mesh[idx_rc]
 
@@ -701,7 +788,7 @@ def Normalization_Constant(r_mesh, idx_rc, P_mesh, Q_mesh, Analytic_normalizatio
         PIB = upper_Dirac_func(G_l, G_lm)
         QB = lower_Dirac_func(G_l, G_lm)
 
-    V = float(potential(r_c, Z, R_au, potential_index))
+    V = float(potential(r_c, Z, R_au, potential_index, phi_r))
     FG = (T - V + 2*c**2)/c
 
     P_prime = -kappa/r_c * P + FG * Q
@@ -736,7 +823,7 @@ def Normalization_Constant(r_mesh, idx_rc, P_mesh, Q_mesh, Analytic_normalizatio
 
 def Analytic(Z,eta, k, W, kappa, c, Lambda, Analytic_normalization_const, T, delta, end_point, N_points):
 
-    r = np.linspace(0,end_point,N_points)
+    r = np.linspace(32,35,N_points)
     if abs(Z) < 1:
         x = k * r
         mult_fact = np.sqrt(T / (T+2*c**2))
@@ -815,6 +902,12 @@ def Visualize(config):
     E_hatree = 27.211386 #eV
 
     potential_index = config["generator"]["potential_index"]
+    if potential_index == 3:
+        print("calculating thomas fermi func")
+        phi_r = make_phi_r(Zf)
+    else:
+        phi_r = 0
+
     Plotting_energy = config["generator"]["T_plot_energy-MeV"]
     T = Plotting_energy * 1e6 / E_hatree
     W = T + c**2
@@ -833,7 +926,7 @@ def Visualize(config):
     N_V = 50000
     r_V = np.linspace(r0,r_END, N_V)
 
-    RV = r_V * potential(r_V,Z, R_au, potential_index)
+    RV = r_V * potential(r_V,Z, R_au, potential_index, phi_r)
 
     RV_spline = CubicSpline(r_V, RV)
 
@@ -844,15 +937,28 @@ def Visualize(config):
     derivatives = [RV_spline, RV_spline_prime, RV_spline_second, RV_spline_third]
 
     mesh_points = mesh_grid(r_END, r_steps , r2 , DRN)
-    rc_idx = Find_rc(mesh_points, k, epsilon, Z, R_au, potential_index)
+    rc_idx = Find_rc(mesh_points, k, epsilon, Z, R_au, potential_index, phi_r)
     t_start = time.perf_counter()
-    series_terms_upper, series_terms_lower = Calc_Series_Terms(mesh_points,angular_momentum_quantum_number, epsilon, T, Z , alpha, kappa, c, sigma, r0 ,R_au, derivatives, potential_index)
+    series_terms_upper, series_terms_lower = Calc_Series_Terms(mesh_points,angular_momentum_quantum_number, epsilon, T, Z , alpha, kappa, c, sigma, r0 ,R_au, derivatives, potential_index, phi_r)
     t_end = time.perf_counter()
     wave_function_upper, wave_function_lower = Solve_Power_Series(series_terms_upper, series_terms_lower, mesh_points)
-    N, delta, r_c = Normalization_Constant(mesh_points, rc_idx ,wave_function_upper,wave_function_lower, Analytic_normalization_const, T, k, eta, W, kappa, Z, c, Lambda, sigma, epsilon, R_au, potential_index)
+    N, delta, r_c = Normalization_Constant(mesh_points, rc_idx ,wave_function_upper,wave_function_lower, Analytic_normalization_const, T, k, eta, W, kappa, Z, c, Lambda, sigma, epsilon, R_au, potential_index, phi_r)
+
+    if potential_index == 3:
+        Z_match = -2.0
+        eta_match = alpha* Z_match *W/(k*c)
+        Lambda_match = np.sqrt(kappa**2 - (Z_match/c)**2)
+        Analytic_normalization_const_match = 1 /Lambda_match * 1/np.sqrt((Z_match/c)**2 * (W+c**2)**2 + (kappa + Lambda_match)**2 *(k*c)**2)
 
 
-    r_analytic, P_analytic, Q_analytic = Analytic(Z,eta, k ,W, kappa, c, Lambda, Analytic_normalization_const, T, delta, 3, 100000)
+    else:
+        Z_match = Z
+        eta_match = eta
+        Lambda_match = Lambda
+        Analytic_normalization_const_match = Analytic_normalization_const
+
+
+    r_analytic, P_analytic, Q_analytic = Analytic(Z_match,eta_match, k ,W, kappa, c, Lambda_match, Analytic_normalization_const_match, T, delta, 3, 100000)
 
     plt.figure(figsize=(12,8))
     plt.plot(mesh_points, wave_function_upper*N , label = "P(r) - Normalized")
@@ -891,6 +997,12 @@ def Generate_Fermi_Data(config):
 
 
     potential_index = config["generator"]["potential_index"]
+    if potential_index == 3:
+        print("calculating thomas fermi func")
+        phi_r = make_phi_r(Zf)
+    else:
+        phi_r = 0
+
     Q = config["generator"]["T_end-MeV"]
     T_start = config["generator"]["T_start-MeV"]
     n_samples = config["generator"]["num_samples"]
@@ -913,7 +1025,7 @@ def Generate_Fermi_Data(config):
     N_V = 50000
     r_V = np.linspace(r0,r_END, N_V)
 
-    RV = r_V * potential(r_V,Z, R_au, potential_index)
+    RV = r_V * potential(r_V,Z, R_au, potential_index, phi_r)
 
     RV_spline = CubicSpline(r_V, RV)
 
@@ -936,10 +1048,10 @@ def Generate_Fermi_Data(config):
         Analytic_normalization_const = 1 /Lambda * 1/np.sqrt((Z/c)**2 * (W+c**2)**2 + (kappa + Lambda)**2 *(k*c)**2)
 
         print(f"Finding wave function for T = {T}, iter = {i}, eta = {eta}")
-        rc_idx = Find_rc(mesh_points, k, epsilon, Z, R_au, potential_index)
-        series_terms_upper, series_terms_lower = Calc_Series_Terms(mesh_points,angular_momentum_quantum_number, epsilon, T, Z , alpha, kappa, c, sigma, r0 ,R_au, derivatives, potential_index)
+        rc_idx = Find_rc(mesh_points, k, epsilon, Z, R_au, potential_index, phi_r)
+        series_terms_upper, series_terms_lower = Calc_Series_Terms(mesh_points,angular_momentum_quantum_number, epsilon, T, Z , alpha, kappa, c, sigma, r0 ,R_au, derivatives, potential_index, phi_r)
         wave_function_upper, wave_function_lower = Solve_Power_Series(series_terms_upper, series_terms_lower, mesh_points)
-        N, delta, r_c = Normalization_Constant(mesh_points, rc_idx ,wave_function_upper,wave_function_lower, Analytic_normalization_const, T, k, eta, W, kappa, Z, c, Lambda, sigma, epsilon, R_au, potential_index)
+        N, delta, r_c = Normalization_Constant(mesh_points, rc_idx ,wave_function_upper,wave_function_lower, Analytic_normalization_const, T, k, eta, W, kappa, Z, c, Lambda, sigma, epsilon, R_au, potential_index, phi_r)
 
         P_list.append(N*wave_function_upper)
         Q_list.append(N*wave_function_lower)
