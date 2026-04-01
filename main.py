@@ -25,31 +25,39 @@ def clean_name(name):
 
 
 def main():
-    parser = argparse.ArgumentParser()
+
+    with open("config.json") as f:
+        config = json.load(f)
+
+    parser = argparse.ArgumentParser(description="Run double beta decay code")
 
     #Generator parses
-    parser.add_argument("--mode", type = str, choices=["generate", "plot", "data"],  help = "'generate' or 'plot' or 'data'")
-    parser.add_argument("--num_samples", type = positive_int, help = "number of energy samples generated")
-    parser.add_argument("--plot_energy", type = positive_float, help = "Kinetic energy in MeV for single plot")
-    parser.add_argument("--potential", type = int, choices = [0,1,2], help = "Select potential function, 0: Z/r , 1: Z/r + V0 exp(-Ar) 2: (for r<R); Z/2R (3-(r/R)^2) (for r >= R); Z/r ")
+    parser.add_argument("--mode", type = str, choices=["generate", "plot", "data"],  help = f"Run mode: 'generate' or 'plot' or 'data', (default from config: { config["generator"]["mode"]})")
+    parser.add_argument("--num_samples", type = positive_int, help = f"Number of energy samples generated, (default from config: {config["generator"]["num_samples"]})")
+    parser.add_argument("--plot_energy", type = positive_float, help = f"Kinetic energy in MeV for single plot, (default from config: {config["generator"]["T_plot_energy-MeV"]})")
+    parser.add_argument("--potential", type = int, choices = [0,1,2,3], help = f"Select potential function, 0: Z/r , 1: Z/r + V0 exp(-Ar) 2: (for r<R); Z/2R (3-(r/R)^2) (for r >= R); Z/r , 3: Thomas-Fermi  , (default from config: {config["generator"]["potential_index"]})")
 
     #Paths parses
-    parser.add_argument("--output_dir", type = str, help = "Output directory name with standard: /out")
+    parser.add_argument("--output_dir", type = clean_name, help = f"Output directory name, (default from config: {config["paths"]["output_directory"]}) ")
 
     #Parameter parses
-    parser.add_argument("--atomic_num", type = positive_int, help = "Atomic number (Z) given as posivite integer value")
-    parser.add_argument("--mass_number", type = positive_int, help = "Mass number (A)")
-    parser.add_argument("--angular_momentum", type = int, help = "Angular momentum (l)")
-    parser.add_argument("--kappa", type = int, help = "Kappa")
+    parser.add_argument("--atomic_num", type = positive_int, help = f"Atomic number (Z) given as posivite integer value, (default from config: {config["parameters"]["atomic_number"]})")
+    parser.add_argument("--mass_number", type = positive_int, help = f"Mass number (A), (default from config: {config["parameters"]["mass_number"]})")
+    parser.add_argument("--angular_momentum", type = int, help = f"Angular momentum (l), (default from config: {config["parameters"]["angular_momentum_l"]})")
+    parser.add_argument("--kappa", type = int, help = f"Kappa, (default from config: { config["parameters"]["kappa"]:+d} )")
+
+
+    # Mesh creation
+    parser.add_argument("--distance", type = positive_float, help = f"Max distance mesh grid is built up to, (default from config: {config["mesh_grid"]["end_point"]})")
+    parser.add_argument("--num_steps", type = positive_int, help = f"Number of steps mesh is made of, (default from config: {config["mesh_grid"]["num_mesh_steps"]})")
+    parser.add_argument("--DRN", type = positive_float, help = f"Upper limit step size grid, (default from config: {config["mesh_grid"]["upper_limit_step_size"]})")
 
 
     args = parser.parse_args()
 
 
-    with open("config.json") as f:
-        config = json.load(f)
 
-    #Generator overrides
+    # Generator overrides
     if args.mode:
         config["generator"]["mode"] = args.mode
 
@@ -62,11 +70,11 @@ def main():
     if args.potential is not None:
         config["generator"]["potential_index"] = args.potential
 
-   #Paths overrides
-    if args.output_dir is not None:
-        config["paths"]["output_directory"] = clean_name(args.output_dir)
+    # Paths overrides
+    if args.output_dir:
+        config["paths"]["output_directory"] = args.output_dir
 
-   #Parameter overrides
+    # Parameter overrides
     if args.atomic_num is not None:
         config["parameters"]["atomic_number"] = args.atomic_number
 
@@ -78,6 +86,16 @@ def main():
 
     if args.kappa is not None:
         config["parameters"]["kappa"] = args.kappa
+
+    # Mesh creation overrides
+    if args.distance is not None:
+        config["mesh_grid"]["end_point"] = args.distance
+
+    if args.num_steps is not None:
+        config["mesh_grid"]["num_mesh_steps"] = args.num_steps
+
+    if args.DRN is not None:
+        config["mesh_grid"]["upper_limit_step_size"] = args.DRN
 
 
 
@@ -92,10 +110,11 @@ def main():
         print(f"calling '{mode}' function for potential 1: Z/r + V0 exp(-Ar)")
     if potential == 2:
         print(f"calling '{mode}' function for potential 2: (for r<R); Z/2R (3-(r/R)^2) (for r >= R); Z/r")
-
+    if potential == 3:
+        print(f"calling '{mode}' function for potential 3: Thomas Fermi")
 
     if mode == "generate":
-        print(f"Saving output in {clean_name(args.output_dir)} directory")
+        print(f"Saving output in \\{config["paths"]["output_directory"]} directory")
         Generate_Fermi_Data(config)
     elif mode == "plot":
         Visualize(config)

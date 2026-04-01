@@ -258,7 +258,7 @@ def Calc_double_beta_decay_spectrum(config):
 
 
     with open(output_file, "w") as f:
-        f.write(f"--- Double Beta Decay Results for Z = {Z}, A = {A} and potential index: {potential_index} ---\n\n")
+        f.write(f"### Double Beta Decay Results for Z = {Z}, A = {A} and potential index: {potential_index} ###\n\n")
 
         f.write(f"G analytic converted to 1/yr units [G0, G2, G4, G22]:  {results} \n")
         f.write(f"G numerical converted to 1/yr units [G0, G2, G4, G22]: {results_num} \n")
