@@ -729,7 +729,7 @@ def obtain_mesh_range(k,epsilon, Z, R_au, potential_index, phi_r):
     else:
         TAS = max(1e-11, epsilon) * abs(Z_inf)
 
-    while abs(RV - Z_inf) <= TAS and (k * r_max <= kr_min):
+    while abs(RV - Z_inf) >= TAS or (k * r_max <= kr_min):
         r_max *= 2
         RV = r_max* potential(r_max, Z, R_au, potential_index, phi_r)
 
