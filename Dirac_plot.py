@@ -81,6 +81,10 @@ T_n3, r_n3, P_n3, Q_n3 = load_data("out", "potential_3_kappa_-1.npz")
 T_p3, r_p3, P_p3, Q_p3 = load_data("out", "potential_3_kappa_+1.npz")
 
 
+T_n_diff, r_n_diff, P_n_diff, Q_n_diff = load_data("resolution_test", "potential_0_kappa_-1_Z-56_A136.npz")
+T_p_diff, r_p_diff, P_p_diff, Q_p_diff = load_data("resolution_test", "potential_0_kappa_+1_Z-56_A136.npz")
+
+
 
 
 
@@ -250,6 +254,15 @@ f_B = np.sqrt((Ee + me)/(2*Ee)) * Q_p[:,idx_R] / (p_au * mesh_point_R_au)
 
 Fermi_B = 2/(s+1)*(g_B**2 + f_B **2)
 
+idx_R_diff , mesh_point_R_au_diff = find_Rau(r_n_diff)
+idx_fB2, mesh_point_fB2 = find_Rau(r_p_diff)
+
+g_B2 = np.sqrt((Ee + me)/(2*Ee)) * P_n_diff[:,idx_R_diff] /(p_au * mesh_point_R_au_diff)
+f_B2 = np.sqrt((Ee + me)/(2*Ee)) * Q_p_diff[:,idx_fB2] / (p_au * mesh_point_fB2)
+
+Fermi_B = 2/(s+1)*(g_B2**2 + f_B2 **2)
+
+
 gB_analytic , fB_analytic = B_wavefuncs_analytic(Ee, R_simkovic)
 
 #### SCHEME C
@@ -281,11 +294,15 @@ Simkovic_fk_A = np.sqrt(Fermi_Analytical(Ee)) * np.sqrt((Ee - me)/ (2*Ee))
 #### PLOTTING g and f
 plt.figure(figsize = (12,8))
 #SCHEME B
-plt.plot(T_MeV, gB_analytic, lw = 2.0 ,label = "Simkovic g_{-1}B")
+# plt.plot(T_MeV, gB_analytic, lw = 2.0 ,label = "Simkovic g_{-1}B")
 plt.plot(T_MeV, abs(g_B), linestyle = "--", lw= 2.0 ,label = "g_B")
-
-plt.plot(T_MeV, fB_analytic, lw = 2.0 , label = "Simkovic f_{-1}B")
+#
+# plt.plot(T_MeV, fB_analytic, lw = 2.0 , label = "Simkovic f_{-1}B")
 plt.plot(T_MeV, abs(f_B), linestyle = "--" , lw = 2.0 , label = "f_B")
+
+plt.plot(T_MeV, abs(g_B2), lw= 2.0 ,label = "g_B2")
+plt.plot(T_MeV, abs(f_B2), lw = 2.0 , label = "f_B2")
+
 
 #Scheme A
 # plt.plot(T_MeV, abs(g_A), linestyle = "--", color = "magenta" , lw = 2.0, label = "g_A")
@@ -296,11 +313,11 @@ plt.plot(T_MeV, abs(f_B), linestyle = "--" , lw = 2.0 , label = "f_B")
 # plt.plot(Simkovic_paper_x , Simkovic_paper_y, lw = 2.0, label = "Simkovic paper")
 
 # # SCHEME C
-plt.plot(T_MeV, abs(g_C), linestyle = "--", color = "magenta" , lw = 2.0, label = "g_C")
-plt.plot(Scheme_Cgx, Scheme_Cgy, lw = 2.0, label = "Simkovic g_{-1} C")
-plt.plot(T_MeV, abs(f_C), ls= "--", lw = 2.0, label = "f_C" )
-plt.plot(Scheme_Cfx, Scheme_Cfy, lw = 2.0, label = "Simkovic f_{+1} C")
-
+# plt.plot(T_MeV, abs(g_C), linestyle = "--", color = "magenta" , lw = 2.0, label = "g_C")
+# plt.plot(Scheme_Cgx, Scheme_Cgy, lw = 2.0, label = "Simkovic g_{-1} C")
+# plt.plot(T_MeV, abs(f_C), ls= "--", lw = 2.0, label = "f_C" )
+# plt.plot(Scheme_Cfx, Scheme_Cfy, lw = 2.0, label = "Simkovic f_{+1} C")
+#
 
 
 

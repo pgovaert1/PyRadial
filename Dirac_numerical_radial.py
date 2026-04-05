@@ -168,17 +168,16 @@ def Find_X(A_grid, x_min = 1e-10):
     return 0.5* (x_min + x_max)
 
 
-def mesh_grid(r_N, N , r2, DRN):
+def mesh_grid(r_END, A_grid, N, r2, DRN):
 
-    A_grid = ((r_N - (N-1) *r2) / r_N) * (DRN / (DRN -r2))
 
     if not (0.5 < A_grid < 1.0):
-        raise ValueError(f"A_grid = {A_grid: .6g}, not in required range (0.5,1). Adjust r2, DRN or N" )
+        raise ValueError(f"A_grid = {A_grid: .6g}, not in required range (0.5,1). Adjust r2 DRN or 'resolution'" )
 
     x = Find_X(A_grid)
 
-    c = x * r_N
-    b = (x * (c + r_N) * (DRN - r2))/ (DRN * r2)
+    c = x * r_END
+    b = (x * (c + r_END) * (DRN - r2))/ (DRN * r2)
     a = (c - b * r2) / (c * r2)
     d = 1 - b * np.log(c)
 
@@ -187,12 +186,12 @@ def mesh_grid(r_N, N , r2, DRN):
 
     r = np.zeros(N)
     r[0] = 0.0
-    r[-1] = r_N
+    r[-1] = r_END
 
     for i in tqdm(range(1,N-1) , desc = "Constructing mesh grid"):
         target = i + 1
         low = r[i-1]
-        high = r_N
+        high = r_END
 
         for k in range(60):
             mid = 0.5*(low + high)
@@ -273,6 +272,22 @@ def General_Potential_Parameters_Dirac(r_a ,r_b, l, T, r0, alpha, derivatives):
 
     return u0, u1, u2, u3
 
+####################################################################################################################
+### Setting up Neaumaier addition functions to enhance floating point precision in the final digits during addition
+### This is needed for the function Power_series_Terms_Dirac to properly converge
+####################################################################################################################
+
+def Neaumaier_add(sum_, c, x):
+    t = sum_ + x
+    if abs(sum_) >= abs(x):
+        c += (sum_ -t) + x
+    else:
+        c += (x-t) + sum_
+    return t , c
+
+def Neaumaier_value(sum_, c):
+    return sum_ + c
+
 
 ##############################################################################################
 ### Finding the power series terms for the initial mesh step [0,rb] in accordance with RADIAL
@@ -317,14 +332,27 @@ def Singular_Power_Series_Terms_Dirac(u_array, r_b, l ,eps ,Z , kappa, c, sigma)
 
         a2, b2 = recurance_terms(2, A2, B2)
 
-        a.append(a0); a.append(a1); a.append(a2)
-        b.append(b0); b.append(b1); b.append(b2)
+        a += [a0,a1,a2]
+        b += [b0,b1, b2]
 
-        S_a = sum(a)
-        S_b = sum(b)
+        S_a, Sa_c = 0.0 , 0.0
+        S_b, Sb_c = 0.0 , 0.0
 
-        S_an = a1 + 2*a2
-        S_bn = b1 + 2*b2
+        S_an, San_c = 0.0 , 0.0
+        S_bn, Sbn_c = 0.0, 0.0
+
+        # S_an = a1 + 2*a2
+        # S_bn = b1 + 2*b2
+
+        for i, ax in enumerate(a):
+            S_a, Sa_c = Neaumaier_add(S_a, Sa_c, ax)
+            if i >= 1:
+                S_an, San_c = Neaumaier_add(S_an, San_c, i* ax)
+
+        for i , bx in enumerate(b):
+            S_b, Sb_c = Neaumaier_add(S_b, Sb_c, bx)
+            if i >=1:
+                S_bn, Sbn_c = Neaumaier_add(S_bn, Sbn_c, i * bx)
 
         n = 2
         while True:
@@ -338,18 +366,28 @@ def Singular_Power_Series_Terms_Dirac(u_array, r_b, l ,eps ,Z , kappa, c, sigma)
             a.append(an)
             b.append(bn)
 
-            S_a += an
-            S_b += bn
+            S_a, Sa_c = Neaumaier_add(S_a, Sa_c, an)
+            S_b, Sb_c = Neaumaier_add(S_b, Sb_c, bn)
+            S_an, San_c = Neaumaier_add(S_an, San_c, n * an)
+            S_bn, Sbn_c = Neaumaier_add(S_bn, Sbn_c, n * bn)
 
-            S_an += n * an
-            S_bn += n * bn
+            S_a_val = Neaumaier_value(S_a, Sa_c)
+            S_b_val = Neaumaier_value(S_b, Sb_c)
+            S_an_val = Neaumaier_value(S_an, San_c)
+            S_bn_val = Neaumaier_value(S_bn, Sbn_c)
+
+            # S_a += an
+            # S_b += bn
+            #
+            # S_an += n * an
+            # S_bn += n * bn
 
 
-            tolerance = eps * max(abs(S_a), abs(S_b), abs(S_an)/n, abs(S_bn)/n)
+            tolerance = eps * max(abs(S_a_val), abs(S_b_val), abs(S_an_val)/n, abs(S_bn_val)/n)
             if max(abs(an) , abs(bn)) < tolerance:
 
-                condition1 = abs(r_b * (s * S_a + S_an) - sigma * abs(kappa) * r_b *S_a + ((u0+u1+u2+u3) - 2*c*r_b) * r_b * S_b)
-                condition2 = abs(r_b * ((s+t)*S_b + S_bn) + sigma * abs(kappa) * r_b * S_b - (u0+u1+u2+u3)*r_b*S_a )
+                condition1 = abs(r_b * (s * S_a_val + S_an_val) - sigma * abs(kappa) * r_b *S_a_val + ((u0+u1+u2+u3) - 2*c*r_b) * r_b * S_b_val)
+                condition2 = abs(r_b * ((s+t)*S_b_val + S_bn_val) + sigma * abs(kappa) * r_b * S_b - (u0+u1+u2+u3)*r_b*S_a_val )
 
                 if max(condition1 , condition2) < tolerance:
                     break
@@ -483,22 +521,6 @@ def Singular_Power_Series_Terms_Dirac(u_array, r_b, l ,eps ,Z , kappa, c, sigma)
 
     return arr_a, arr_b, normalized_end_point_a, normalized_end_point_b, s, t
 
-
-####################################################################################################################
-### Setting up Neaumaier addition functions to enhance floating point precision in the final digits during addition
-### This is needed for the function Power_series_Terms_Dirac to properly converge
-####################################################################################################################
-
-def Neaumaier_add(sum_, c, x):
-    t = sum_ + x
-    if abs(sum_) >= abs(x):
-        c += (sum_ -t) + x
-    else:
-        c += (x-t) + sum_
-    return t , c
-
-def Neaumaier_value(sum_, c):
-    return sum_ + c
 
 
 ######################################################################################################
@@ -689,6 +711,36 @@ def Solve_Power_Series(list_of_sequence_terms_a, list_of_sequence_terms_b, grid_
 
     return P_mesh, Q_mesh
 
+###################################################################################
+### Find mminimum range up to which to extend the mesh range used to solve P and Q
+###################################################################################
+
+def obtain_mesh_range(k,epsilon, Z, R_au, potential_index, phi_r):
+    kr_min = 20.0
+    r_max = 0.01
+
+    RV = r_max* potential(r_max, Z, R_au, potential_index, phi_r)
+    r_infty = 1e5
+    Z_inf = r_infty * potential(r_infty, Z, R_au, potential_index, phi_r)
+
+
+    if potential_index == 3:
+        TAS = 10e-4 * abs(Z_inf)
+    else:
+        TAS = max(1e-11, epsilon) * abs(Z_inf)
+
+    while abs(RV - Z_inf) <= TAS and (k * r_max <= kr_min):
+        r_max *= 2
+        RV = r_max* potential(r_max, Z, R_au, potential_index, phi_r)
+
+    print(f"mesh range set to {r_max}")
+
+    return r_max
+
+
+
+
+
 #################################################################################################################################################
 ### Find_rc is a function finding the matching radius rc at which one can normalize the power series by matching it witht he asymptotic behavior
 #################################################################################################################################################
@@ -718,7 +770,6 @@ def Find_rc(r_mesh,k,epsilon, Z , R_au, potential_index, phi_r):
 
 
     if idx_rc is None:
-        #TODO Include a loop to automatically extend the distance further
         raise RuntimeError("No rc found, extend distance")
     print(f"rc succesfully found at rc = {r_grid[idx_rc]}")
     return idx_rc
@@ -821,9 +872,9 @@ def Normalization_Constant(r_mesh, idx_rc, P_mesh, Q_mesh, Analytic_normalizatio
 ### Analytic function solves the analytic coulomb wave functions P and Q using mp.math CoulombF and Coulombg functions
 #######################################################################################################################
 
-def Analytic(Z,eta, k, W, kappa, c, Lambda, Analytic_normalization_const, T, delta, end_point, N_points):
+def Analytic(Z,eta, k, W, kappa, c, Lambda, Analytic_normalization_const, T, delta, N_points, rc):
 
-    r = np.linspace(32,35,N_points)
+    r = np.linspace(max(0,rc-1.5),rc+1.5,N_points)
     if abs(Z) < 1:
         x = k * r
         mult_fact = np.sqrt(T / (T+2*c**2))
@@ -916,11 +967,26 @@ def Visualize(config):
     Analytic_normalization_const = 1 /Lambda * 1/np.sqrt((Z/c)**2 * (W+c**2)**2 + (kappa + Lambda)**2 *(k*c)**2)
 
 
-    r_steps = config["mesh_grid"]["num_mesh_steps"]
-    r_END = config["mesh_grid"]["end_point"]
+    r_N = config["mesh_grid"]["num_mesh_steps"]
     r2 = config["mesh_grid"]["second_point"]
     r0 = 1e-15 ## to avoid 1/r division by 0
     DRN = config["mesh_grid"]["upper_limit_step_size"]#Upper limit on distance between points near the end regime (make sure this stays small enough or wavefunc will not converge at larger distances r)
+
+
+    r_END = obtain_mesh_range(k, epsilon, Z, R_au, potential_index, phi_r)
+
+    if r_N is None:
+        r_N = 10000
+
+    A_grid = ((r_END - (r_N - 1) *r2) / r_END) * (DRN / (DRN -r2))
+
+    while not (0.5 < A_grid < 1.0):
+        r_N += 5000
+        A_grid = ((r_END - (r_N - 1) *r2) / r_END) * (DRN / (DRN -r2))
+
+    print(f"resolution set to {r_N} mesh points")
+    mesh_points = mesh_grid(r_END, A_grid, r_N, r2, DRN)
+    rc_idx = Find_rc(mesh_points, k, epsilon, Z, R_au, potential_index, phi_r)
 
     ###Setting up cubic spline
     N_V = 50000
@@ -936,11 +1002,9 @@ def Visualize(config):
 
     derivatives = [RV_spline, RV_spline_prime, RV_spline_second, RV_spline_third]
 
-    mesh_points = mesh_grid(r_END, r_steps , r2 , DRN)
-    rc_idx = Find_rc(mesh_points, k, epsilon, Z, R_au, potential_index, phi_r)
-    t_start = time.perf_counter()
+
+
     series_terms_upper, series_terms_lower = Calc_Series_Terms(mesh_points,angular_momentum_quantum_number, epsilon, T, Z , alpha, kappa, c, sigma, r0 ,R_au, derivatives, potential_index, phi_r)
-    t_end = time.perf_counter()
     wave_function_upper, wave_function_lower = Solve_Power_Series(series_terms_upper, series_terms_lower, mesh_points)
     N, delta, r_c = Normalization_Constant(mesh_points, rc_idx ,wave_function_upper,wave_function_lower, Analytic_normalization_const, T, k, eta, W, kappa, Z, c, Lambda, sigma, epsilon, R_au, potential_index, phi_r)
 
@@ -958,7 +1022,7 @@ def Visualize(config):
         Analytic_normalization_const_match = Analytic_normalization_const
 
 
-    r_analytic, P_analytic, Q_analytic = Analytic(Z_match,eta_match, k ,W, kappa, c, Lambda_match, Analytic_normalization_const_match, T, delta, 3, 100000)
+    r_analytic, P_analytic, Q_analytic = Analytic(Z_match,eta_match, k ,W, kappa, c, Lambda_match, Analytic_normalization_const_match, T, delta, 100000, mesh_points[rc_idx])
 
     plt.figure(figsize=(12,8))
     plt.plot(mesh_points, wave_function_upper*N , label = "P(r) - Normalized")
@@ -971,7 +1035,7 @@ def Visualize(config):
     plt.xlabel("r in a.u")
     plt.ylabel("P(r)")
     plt.grid(True)
-    plt.title(f"E = {T: .2g}, Z = {Z}, A = {N: .3g}, delta = {delta: .3g}, N = {r_steps}, DRN = {DRN} , r2 = {r2}, r_end = {r_END}, r_c = {r_c: .3g}")
+    plt.title(f"E = {T: .2g}, Z = {Z}, A = {N: .3g}, delta = {delta: .3g}, N = {r_N}, DRN = {DRN} , r2 = {r2}, r_end = {r_END}, r_c = {r_c: .3g}")
     plt.legend()
     plt.show()
 
@@ -1011,15 +1075,25 @@ def Generate_Fermi_Data(config):
 
 
 
-    r_steps = config["mesh_grid"]["num_mesh_steps"]
-    r_END = config["mesh_grid"]["end_point"]
+    r_N = config["mesh_grid"]["num_mesh_steps"]
     r2 = config["mesh_grid"]["second_point"]
     r0 = 1e-15 ## to avoid 1/r division by 0
     DRN = config["mesh_grid"]["upper_limit_step_size"]#Upper limit on distance between points near the end regime (make sure this stays small enough or wavefunc will not converge at larger distances r)
 
+    k_max = np.sqrt(T_range[0]*(T_range[0] + 2*c**2))/c
+    r_END = obtain_mesh_range(k_max, epsilon, Z, R_au, potential_index, phi_r)
 
+    if r_N is None:
+        r_N = 10000
 
-    mesh_points = mesh_grid(r_END, r_steps , r2 , DRN)
+    A_grid = ((r_END - (r_N - 1) *r2) / r_END) * (DRN / (DRN -r2))
+
+    while not (0.5 < A_grid < 1.0):
+        r_N += 10000
+        A_grid = ((r_END - (r_N - 1) *r2) / r_END) * (DRN / (DRN -r2))
+
+    print(f"resolution set to {r_N} mesh points")
+    mesh_points = mesh_grid(r_END, A_grid, r_N, r2, DRN)
 
     ###Setting up cubic spline
     N_V = 50000
@@ -1062,7 +1136,7 @@ def Generate_Fermi_Data(config):
     r_arr = np.asarray(mesh_points, dtype = float)
     T_arr = np.asarray(T_range, dtype = float)
 
-    filename = f"potential_{potential_index}_kappa_{kappa:+d}.npz"
+    filename = f"potential_{potential_index}_kappa_{kappa:+d}_Z{Z}_A{A}.npz"
 
     output_directory = Path(config["paths"]["output_directory"])
     output_directory.mkdir(parents=True, exist_ok=True)
