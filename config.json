@@ -7,8 +7,7 @@
 	},
 
 "mesh_grid":{
-	"num_mesh_steps": 300000,
-	"end_point": 25,
+	"num_mesh_steps": null,
 	"second_point" : 1e-7,
 	"upper_limit_step_size": 1e-4
 	},
