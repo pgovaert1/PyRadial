@@ -255,7 +255,11 @@ f_B = np.sqrt((Ee + me)/(2*Ee)) * Q_p[:,idx_R] / (p_au * mesh_point_R_au)
 Fermi_B = 2/(s+1)*(g_B**2 + f_B **2)
 
 idx_R_diff , mesh_point_R_au_diff = find_Rau(r_n_diff)
+print(f"res 200000 closest mesh point to R_au = {R_au: .5g} is at i ={idx_R_diff} w/ mesh point value ={mesh_point_R_au_diff: .5g}")
+
 idx_fB2, mesh_point_fB2 = find_Rau(r_p_diff)
+print(f"res 110000: closest mesh point to R_au = {R_au: .5g} is at i ={idx_fB2} w/ mesh point value ={mesh_point_fB2: .5g}")
+
 
 g_B2 = np.sqrt((Ee + me)/(2*Ee)) * P_n_diff[:,idx_R_diff] /(p_au * mesh_point_R_au_diff)
 f_B2 = np.sqrt((Ee + me)/(2*Ee)) * Q_p_diff[:,idx_fB2] / (p_au * mesh_point_fB2)
