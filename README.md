@@ -2,3 +2,15 @@ Write main.py file that takes a json file as an input and make an example of a j
 
 
 Also document stuff
+
+
+Is this the kind of flow diagrams we want?
+
+```mermaid 
+graph TD;
+  A --> B;
+  A --> C;
+  B --> D;
+  C --> D;
+```
+
