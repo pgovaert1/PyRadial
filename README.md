@@ -8,9 +8,9 @@ Is this the kind of flow diagrams we want?
 
 ```mermaid 
 graph TD;
-  A --> B;
-  A --> C;
-  B --> D;
-  C --> D;
+  A[main.py] --> B[Load config.json];
+  B --> |Generate_fermi_Data| C[Dira_numerical_radial.py];
+  B --> |Visualize| C[Dirac_numerical_radial.py];
+  B --> |Calc_double_beta_spectrum| D[Simkovic] ;
 ```
 
