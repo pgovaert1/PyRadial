@@ -23,7 +23,7 @@ def clean_name(name):
     name = name.replace(" ", "_")
     return name
 
-
+# good that you are controlling bad user in put, there are however way too many options, some of them the user should not have access to like this like the Q value which depends on what nuclear model they are using (if the use QRPA NMEs the Q value is already set)
 def main():
 
     with open("config.json") as f:
@@ -123,6 +123,6 @@ def main():
     else:
         raise ValueError("Unkown mode: {mode}")
 
-
+# Don't forget to modify and add the BBKING overleaf document into the repo, this will do the heavy theory lifting for the repository like the Radial documentation talking about Dirac-Coulomb wavefunction
 if __name__ == "__main__":
     main()
