@@ -11,9 +11,10 @@ import os
 from scipy.special import spherical_jn
 from tqdm import tqdm
 import time
-import math
+import math # make sure to minimize the use of different packages when one can do it all
 from pathlib import Path
 
+# make Sure to comment random bits of codes like this
 mp.mp.dps = 30
 
 
@@ -21,7 +22,23 @@ mp.mp.dps = 30
 ##### Function to save generated data to a file
 ########################################################
 
+# Add a 
 def save_run_npz(filename, label, r, P):
+    """Append a radial wave function to a compressed ``.npz`` archive.
+
+    Creates the file if it does not exist; otherwise merges with existing data.
+
+    Input
+    -----
+    filename : str or PathLike – target ``.npz`` file.
+    label    : str             – key prefix (e.g. ``"run1"`` → ``"run1_r"``, ``"run1_P"``).
+    r        : array_like      – radial grid (a.u.).
+    P        : array_like      – upper-component wave function on *r*.
+
+    Output
+    ------
+    None – writes ``{label}_r`` and ``{label}_P`` into *filename*.
+    """
 
     if os.path.exists(filename):
         old = np.load(filename)
@@ -29,18 +46,14 @@ def save_run_npz(filename, label, r, P):
     else:
         data = {}
 
-
     data[f"{label}_r"] = r
     data[f"{label}_P"] = P
 
     np.savez_compressed(filename, **data)
 
 
-
-
-
 ##################
-### Thomas-Fermi
+### Thomas-Fermi (rather in its own file)
 ##################
 
 def solve_thomas_fermi(tsteps, Nmax, dps):
@@ -102,7 +115,7 @@ def make_phi_r(Z, tsteps=200, Nmax=100, dps=60):
 
 
 ###################################
-###Setup Cubic Spline potential V
+###Setup Cubic Spline potential V (have the basic analytical solution in its own .py file and numerical algorithm in its own)
 ###################################
 
 def potential(r, Z, R_au, potential_index, phi_r):
@@ -142,8 +155,7 @@ def potential(r, Z, R_au, potential_index, phi_r):
     else:
         raise RuntimeError("No proper potential function idex number was selected")
 
-
-
+# you can ask chatgpt or look at standards like black when it comes to capitalization and spacing. Good looking code is important for clarity and maintainability.
 
 
 #####################################################################################################################
@@ -167,7 +179,7 @@ def Find_X(A_grid, x_min = 1e-10):
 
     return 0.5* (x_min + x_max)
 
-
+# meshes usually mean 2D but 1D is fine, for the inexperienced user, add 1d 
 def mesh_grid(r_END, A_grid, N, r2, DRN):
 
 
@@ -192,7 +204,7 @@ def mesh_grid(r_END, A_grid, N, r2, DRN):
         target = i + 1
         low = r[i-1]
         high = r_END
-
+        
         for k in range(60):
             mid = 0.5*(low + high)
             if G(low) > target: raise RuntimeError("Left bracketing failed")
@@ -210,7 +222,7 @@ def mesh_grid(r_END, A_grid, N, r2, DRN):
 ### Calculate the potential parameters u0,u1,u2,u3 in accordance to RADIAL for the initial mesh step [0,rb]
 #############################################################################################################
 
-def Singular_Potential_Parameters_Dirac(r_b, T, Z, alpha, r0, R_au, potential_index, phi_r):
+def singular_potential_parameters_dirac(r_b, T, Z, alpha, r0, R_au, potential_index, phi_r):
     h = r_b
     Z_sing = Z
     # def V_reg(r,Z):
@@ -248,7 +260,7 @@ def Singular_Potential_Parameters_Dirac(r_b, T, Z, alpha, r0, R_au, potential_in
 ### Calculate the potential parameters u0,u1,u2,u3 in accordance to RADIAL for the any mesh step [ra,rb] for ra != 0
 #####################################################################################################################
 
-def General_Potential_Parameters_Dirac(r_a ,r_b, l, T, r0, alpha, derivatives):
+def general_potential_parameters_dirac(r_a ,r_b, l, T, r0, alpha, derivatives):
     ra = max(r_a, r0)
     rb = r_b
 
@@ -393,7 +405,7 @@ def Singular_Power_Series_Terms_Dirac(u_array, r_b, l ,eps ,Z , kappa, c, sigma)
                     break
 
             if n > 499:
-                raise RuntimeError(f"No convergenvce before n = {n}")
+                raise RuntimeError(f"The Power Series Method for the electromagnetic correction failed to converge before n = {n} iterations. Consider increasing the value of eps or check the potential parameters u0,u1,u2,u3 for consistency")
 
 
     elif (u0 == 0 and sigma == 1):
@@ -450,7 +462,7 @@ def Singular_Power_Series_Terms_Dirac(u_array, r_b, l ,eps ,Z , kappa, c, sigma)
                     break
 
             if n > 499:
-                raise RuntimeError(f"No convergenvce before n = {n}")
+                raise RuntimeError(f"The power series method for the electromagnetic correction failed to converge before n = {n} iterations. Consider increasing the value of eps or check the potential parameters u0,u1,u2,u3 for consistency")
 
     elif (u0 == 0 and sigma == -1):
         s = abs(kappa) + 1
@@ -632,10 +644,10 @@ def Power_Series_Terms_Dirac(u_array, initial_condition_a, initial_condition_b ,
 ### Calc_Series_Terms function calls the Potential_Parameter and Power_series_Terms functions to
 ###calculate and stich toghether all the terms needed to solve the power series
 #################################################################################################
-
+# mind the capitalization
 def Calc_Series_Terms(mesh_steps, l ,epsilon, T, Z, alpha, kappa, c, sigma, r0, R_au, derivatives, potential_index, phi_r, ratio_max = 0.05, max_subdiv = 200):
 
-    u_parameters0 = Singular_Potential_Parameters_Dirac(mesh_steps[1], T, Z, alpha, r0, R_au, potential_index, phi_r)
+    u_parameters0 = singular_potential_parameters_dirac(mesh_steps[1], T, Z, alpha, r0, R_au, potential_index, phi_r)
     Series_terms0a , Series_terms0b , initial_condition0a, initial_condition0b, s, t = Singular_Power_Series_Terms_Dirac(u_parameters0 ,mesh_steps[1] ,l ,epsilon ,Z ,kappa ,c ,sigma)
 
     initial_temp_condition_a = initial_condition0a
@@ -661,7 +673,7 @@ def Calc_Series_Terms(mesh_steps, l ,epsilon, T, Z, alpha, kappa, c, sigma, r0, 
                 ra = float(sub_grid[j])
                 rb = float(sub_grid[j+1])
 
-                u_temp_parameter = General_Potential_Parameters_Dirac(ra, rb, l, T, r0, alpha, derivatives)
+                u_temp_parameter = general_potential_parameters_dirac(ra, rb, l, T, r0, alpha, derivatives)
 
                 Temp_series_terms_a,Temp_series_terms_b, initial_temp_condition_a, initial_temp_condition_b = Power_Series_Terms_Dirac(u_temp_parameter, initial_temp_condition_a, initial_temp_condition_b, ra , rb, l, epsilon, kappa, r0, c, sigma)
 
@@ -670,7 +682,7 @@ def Calc_Series_Terms(mesh_steps, l ,epsilon, T, Z, alpha, kappa, c, sigma, r0, 
                     Series_terms_list_b.append(Temp_series_terms_b)
         else:
 
-            u_temp_parameter = General_Potential_Parameters_Dirac(r_a, r_b,l, T, r0, alpha, derivatives)
+            u_temp_parameter = general_potential_parameters_dirac(r_a, r_b,l, T, r0, alpha, derivatives)
 
             Temp_series_terms_a, Temp_series_terms_b, initial_temp_condition_a, initial_temp_condition_b = Power_Series_Terms_Dirac(u_temp_parameter, initial_temp_condition_a, initial_temp_condition_b, r_a , r_b, l, epsilon, kappa, r0, c, sigma)
 
@@ -1039,7 +1051,7 @@ def Visualize(config):
     plt.legend()
     plt.show()
 
-
+# try splitting things up a bit more. The constants can be put into a single file called constants.py that can be called by any function which makes sure we dont define the same thing multiple times 
 def Generate_Fermi_Data(config):
     ### DECLARE PARAMETERS
     A = config["parameters"]["mass_number"]
