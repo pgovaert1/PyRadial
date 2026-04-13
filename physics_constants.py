@@ -13,5 +13,6 @@ GF = 1.1663787e-11 # Fermi coupling constant in MeV^-2
 VUD =  0.973735 # CKM matrix element
 HBAR_C = 197.3 # MeV*fm
 GA = 1.269 # Axial vector coupling constant
+TLIT = 2.19e21 # yr half-life
 
 

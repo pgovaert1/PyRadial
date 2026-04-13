@@ -1060,7 +1060,7 @@ def Generate_Fermi_Data(config,cnf):
     else:
         phi_r = 0
 
-    Q = config["generator"]["T_end-MeV"]
+    Q = cnf["Q"]
     T_start = config["generator"]["T_start-MeV"]
     n_samples = config["generator"]["num_samples"]
 
@@ -1070,7 +1070,6 @@ def Generate_Fermi_Data(config,cnf):
 
     r_N = config["mesh_grid"]["num_mesh_steps"]
     r2 = config["mesh_grid"]["second_point"]
-    r0 = 1e-15 ## to avoid 1/r division by 0
     DRN = config["mesh_grid"]["upper_limit_step_size"]#Upper limit on distance between points near the end regime (make sure this stays small enough or wavefunc will not converge at larger distances r)
 
     k_max = np.sqrt(T_range[0]*(T_range[0] + 2*C**2))/C
@@ -1090,7 +1089,7 @@ def Generate_Fermi_Data(config,cnf):
 
     ###Setting up cubic spline
     N_V = 50000
-    r_V = np.linspace(r0,r_END, N_V)
+    r_V = np.linspace(R0,r_END, N_V)
 
     RV = r_V * potential(r_V,Z, R_au, potential_index, phi_r)
 
@@ -1138,11 +1137,13 @@ def Generate_Fermi_Data(config,cnf):
         r_arr = np.asarray(mesh_points, dtype = float)
         T_arr = np.asarray(T_range, dtype = float)
 
-        filename = f"potential_{potential_index}_kappa_{kappa:+d}_Z{Zf}_A{A}.npz"
+        filename = f"{config["isotope"]}_potential_{potential_index}_kappa_{kappa:+d}_Z{Zf}_A{A}.npz"
 
-        output_directory = Path(config["paths"]["output_directory"])
-        output_directory.mkdir(parents=True, exist_ok=True)
-        file_path = output_directory / filename
+        main_output_directory = Path("Dirac_"+config["isotope"])
+
+        NPZ_output_directory = main_output_directory / "NPZ_files"
+        NPZ_output_directory.mkdir(parents=True, exist_ok=True)
+        file_path = NPZ_output_directory / filename
 
         np.savez_compressed(file_path, T = T_arr, r = r_arr, P = P_arr, Q = Q_arr)
 

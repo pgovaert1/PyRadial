@@ -1,4 +1,17 @@
 {
+
+ "project_name" : "Dirac_Xe136",
+ "interaction" : "2nbb",
+ "isotope" : "Xe136",
+ "nuclear_model" : "QRPA_Simko_2018",
+ "transition" : ["GT"],
+ "electrostatic_potential_model" : "Analytical",
+ "ho_correction": [],
+ "bin_size [keV]" : 10,
+ "output_path" : "/home/saelmo/Desktop/output/",
+
+
+
 "parameters":{
 	"mass_number": 136,
 	"atomic_number": 56,
@@ -14,7 +27,7 @@
 
 "generator":{
 	"potential_index": 0,
-	"mode": "plot",
+	"mode": null,
 	"T_plot_energy-MeV": 0.5,
 	"T_end-MeV": 2.45791,
 	"T_start-MeV": 1e-4,
