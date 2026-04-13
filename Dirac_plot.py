@@ -79,11 +79,11 @@ aT_p_V0, ar_p_V0, aP_p_V0, aQ_p_V0 = load_data("out", "Analytic_Coulomb_kappa_p_
 
 T_n3, r_n3, P_n3, Q_n3 = load_data("out", "potential_3_kappa_-1.npz")
 T_p3, r_p3, P_p3, Q_p3 = load_data("out", "potential_3_kappa_+1.npz")
-
-
-T_n_diff, r_n_diff, P_n_diff, Q_n_diff = load_data("resolution_test", "potential_0_kappa_-1_Z-56_A136.npz")
-T_p_diff, r_p_diff, P_p_diff, Q_p_diff = load_data("resolution_test", "potential_0_kappa_+1_Z-56_A136.npz")
-
+#
+#
+# T_n_diff, r_n_diff, P_n_diff, Q_n_diff = load_data("resolution_test", "potential_0_kappa_-1_Z-56_A136.npz")
+# T_p_diff, r_p_diff, P_p_diff, Q_p_diff = load_data("resolution_test", "potential_0_kappa_+1_Z-56_A136.npz")
+#
 
 
 

@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 from scipy.integrate import nquad
 from scipy.integrate import quad
 from scipy.interpolate import interp1d
+from pathlib import Path
 import os
 
 # Got the values from CODATA, probably not used by Simkovic but they are accurate
@@ -170,11 +171,16 @@ def Calc_double_beta_decay_spectrum(config):
 
     potential_index = config["generator"]["potential_index"]
 
-    directory_name = config["paths"]["output_directory"]
-    file_name_kappa_p = f"potential_{potential_index}_kappa_+1.npz"
-    file_name_kappa_n = f"potential_{potential_index}_kappa_-1.npz"
 
-    output_file = config["paths"]["output_results_file"]
+    directory_name = config["paths"]["output_directory"]
+    file_name_kappa_p = f"potential_{potential_index}_kappa_+1_Z{Z:}_A{A}.npz"
+    file_name_kappa_n = f"potential_{potential_index}_kappa_-1_Z{Z:}_A{A}.npz"
+
+    output_directory = Path("phase_space_results")
+    output_directory.mkdir(parents = True, exist_ok = True)
+    output_file = f"results_potential_{potential_index}_Z{Z}_A{A}.txt"
+    output_path = output_directory/output_file
+
     plot_directory = config["paths"]["plot_directory"]
     os.makedirs(plot_directory, exist_ok = True)
 
@@ -195,7 +201,7 @@ def Calc_double_beta_decay_spectrum(config):
     plt.ylabel('Fermi Function Value')
     plt.title('Fermi Function vs Electron Energy')
     plt.legend()
-    plt.savefig(os.path.join(plot_directory, f"Fermi_Function_potential_{potential_index}.png"), dpi = 300)
+    plt.savefig(os.path.join(plot_directory, f"Fermi_Function_potential_{potential_index}_Z{Z}_A{A}.png"), dpi = 300)
     plt.show()
 
     Fermi_analytic = lambda Ee: Fermi(Ee, Z , A, rN)
@@ -247,7 +253,7 @@ def Calc_double_beta_decay_spectrum(config):
     plt.legend()
     plt.title('2νββ Spectrum vs epsilon')
     plt.grid(True)
-    plt.savefig(os.path.join(plot_directory, f"Spectrum_potential_{potential_index}.png"), dpi = 300)
+    plt.savefig(os.path.join(plot_directory, f"Spectrum_potential_{potential_index}_Z{Z}_A{A}.png"), dpi = 300)
     plt.show()
 
     total_rate, total_err = quad(lambda eps: spectrum_epsilon(eps, Q, Fermi_analytic), 0.0, Q,
@@ -257,16 +263,24 @@ def Calc_double_beta_decay_spectrum(config):
 
 
 
-    with open(output_file, "w") as f:
-        f.write(f"### Double Beta Decay Results for Z = {Z}, A = {A} and potential index: {potential_index} ###\n\n")
+    with open(output_path, "w") as f:
+        scheme = None
+        if potential_index == 0:
+            scheme = "B"
+        elif potential_index == 2:
+            scheme = "A"
+        elif potential_index == 3:
+            scheme = "C"
+
+        f.write(f"### Double Beta Decay Results for Z = {Z}, A = {A} using Scheme {scheme} ###\n\n")
 
         f.write(f"G analytic converted to 1/yr units [G0, G2, G4, G22]:  {results} \n")
         f.write(f"G numerical converted to 1/yr units [G0, G2, G4, G22]: {results_num} \n")
-        f.write(f"Literature values:  ------------------------------->   {Glit} \n\n")
-
-        f.write(f"Relative differences analytic vs literature: {100*(results - Glit) / Glit} \n")
-        f.write(f"Relative difference numeric vs analytic:     {100*(results_num - results)/ results} \n")
-        f.write(f"Relative difference numeric vs literature:   {100*(results_num - Glit)/ Glit} \n\n")
+        # f.write(f"Literature values:  ------------------------------->   {Glit} \n\n")
+        #
+        # f.write(f"Relative differences analytic vs literature: {100*(results - Glit) / Glit} \n")
+        # f.write(f"Relative difference numeric vs analytic:     {100*(results_num - results)/ results} \n")
+        # f.write(f"Relative difference numeric vs literature:   {100*(results_num - Glit)/ Glit} \n\n")
 
         f.write(f"Calculated analytic half life: {halflife: .6e} \n")
         f.write(f"Calculated numeric half life:  {halflife_num: .6e} \n")
