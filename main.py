@@ -99,16 +99,13 @@ def main():
 
 
 
-
-
-  ####
-
-  json_file = json.load(¨path¨)
-  cnf = make_nice(json_file)
-  import thomas_fermi.py
-  thomas_fermi.give_me_the_phi(mesh, cnf)
-
-  ####
+    # write a smaller config file needed for Dira_numer_radial.py
+    cnf ={
+        "Z": config["parameters"]["atomic_number"],
+        "A": config["parameters"]["mass_number"],
+        "angular_momentum_l": config["parameters"]["angular_momentum_l"],
+        "kappa": config["parameters"]["kappa"]
+        }
 
 
     mode = config["generator"]["mode"]
@@ -124,10 +121,10 @@ def main():
 
     if mode == "generate":
         print(f"Saving output in \\{config["paths"]["output_directory"]} directory")
-        Generate_Fermi_Data(config)
+        Generate_Fermi_Data(config,cnf)
         #### Generate_Fermi_Data(cnf)
     elif mode == "plot":
-        Visualize(config)
+        Visualize(config,cnf)
     elif mode == "data":
         Calc_double_beta_decay_spectrum(config)
     else:

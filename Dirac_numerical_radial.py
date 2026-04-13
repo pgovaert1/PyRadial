@@ -13,6 +13,10 @@ from tqdm import tqdm
 import time
 import math
 from pathlib import Path
+from physics_constants import ALPHA, C, EPSILON, AU, E_HARTREE, R0
+
+
+
 
 mp.mp.dps = 30
 
@@ -219,35 +223,29 @@ def mesh_grid(r_END, A_grid, N, r2, DRN, nuc_radius):
 ### Calculate the potential parameters u0,u1,u2,u3 in accordance to RADIAL for the initial mesh step [0,rb]
 #############################################################################################################
 
-def Singular_Potential_Parameters_Dirac(r_b, T, Z, alpha, r0, R_au, potential_index, phi_r):
+def Singular_Potential_Parameters_Dirac(r_b, T, Z, R_au, potential_index, phi_r):
     h = r_b
     Z_sing = Z
-    # def V_reg(r,Z):
-    #     if potential_index == 0:
-    #         return potential(r,Z, R_au, potential_index, phi_r)
-    #     elif potential_index == 0 or potential_index == 2:
-    #         return potential(r, Z ,R_au, potential_index, phi_r) - Z_sing / r
-    #     else:
-    #         raise RuntimeError("No proper potential potential_index selected")
+
     if potential_index == 0:
         V_reg = lambda r: potential(r, Z, R_au, potential_index, phi_r) - Z_sing/r
-        u0 = alpha* Z_sing
+        u0 = ALPHA * Z_sing
     elif potential_index in (1,2,3):
         V_reg = lambda r: potential(r, Z, R_au, potential_index, phi_r)
         u0 = 0.0
     else:
         raise RuntimeError("No proper potential potential_index selected")
 
-    v0 = float(V_reg(r0))
+    v0 = float(V_reg(R0))
     dr = 1e-8
-    v1 = (V_reg(r0+dr) - V_reg(r0-dr)) / (2*dr)
-    v2 = (V_reg(r0+dr) - 2*V_reg(r0) + V_reg(r0-dr)) / (dr**2)
+    v1 = (V_reg(R0+dr) - V_reg(R0-dr)) / (2*dr)
+    v2 = (V_reg(R0+dr) - 2*V_reg(R0) + V_reg(R0-dr)) / (dr**2)
     # v3 = (V_reg(r0 + 2*dr) - 3*V_reg(r0 + dr) + 3*V_reg(r0) - V_reg(r0 -dr))/ (dr**3)
 
     # u0 = 0 #alpha * Z_sing
-    u1 = alpha * h *(v0-T)
-    u2 = alpha * h**2 * (v1)
-    u3 = alpha * h**3 * (0.5*v2)
+    u1 = ALPHA * h *(v0-T)
+    u2 = ALPHA * h**2 * (v1)
+    u3 = ALPHA * h**3 * (0.5*v2)
 
     return u0, u1, u2, u3
 
@@ -257,8 +255,8 @@ def Singular_Potential_Parameters_Dirac(r_b, T, Z, alpha, r0, R_au, potential_in
 ### Calculate the potential parameters u0,u1,u2,u3 in accordance to RADIAL for the any mesh step [ra,rb] for ra != 0
 #####################################################################################################################
 
-def General_Potential_Parameters_Dirac(r_a ,r_b, l, T, r0, alpha, derivatives):
-    ra = max(r_a, r0)
+def General_Potential_Parameters_Dirac(r_a ,r_b, l, T, derivatives):
+    ra = max(r_a, R0)
     rb = r_b
 
     rv0 = float(derivatives[0](ra))
@@ -273,10 +271,10 @@ def General_Potential_Parameters_Dirac(r_a ,r_b, l, T, r0, alpha, derivatives):
 
     h = r_b-r_a
 
-    u0 = alpha * (v0 + (v1-T)*r_a + v2*r_a**2 + v3*r_a**3)
-    u1 = alpha*h * ((v1-T) + 2*v2*r_a + 3*v3*r_a**2)
-    u2 = alpha*h**2 * (v2 + 3*v3*r_a)
-    u3 = alpha*v3*h**3
+    u0 = ALPHA * (v0 + (v1-T)*r_a + v2*r_a**2 + v3*r_a**3)
+    u1 = ALPHA *h * ((v1-T) + 2*v2*r_a + 3*v3*r_a**2)
+    u2 = ALPHA *h**2 * (v2 + 3*v3*r_a)
+    u3 = ALPHA *v3*h**3
 
 
     return u0, u1, u2, u3
@@ -302,7 +300,7 @@ def Neaumaier_value(sum_, c):
 ### Finding the power series terms for the initial mesh step [0,rb] in accordance with RADIAL
 ##############################################################################################
 
-def Singular_Power_Series_Terms_Dirac(u_array, r_b, l ,eps ,Z , kappa, c, sigma):
+def Singular_Power_Series_Terms_Dirac(u_array, r_b, l ,Z , kappa, sigma):
     u0 = u_array[0]
     u1 = u_array[1]
     u2 = u_array[2]
@@ -316,12 +314,12 @@ def Singular_Power_Series_Terms_Dirac(u_array, r_b, l ,eps ,Z , kappa, c, sigma)
 
     if u0 != 0:
         t = 0
-        if (Z/c)**2 > kappa**2:
+        if (Z/C)**2 > kappa**2:
             raise RuntimeError("s = sqrt(kappa^2 - u0^2) is imaginary")
         else:
-            s = np.sqrt(kappa**2 - (Z/c)**2)
+            s = np.sqrt(kappa**2 - (Z/C)**2)
 
-        temp_mult_term = u1 - 2*c*r_b
+        temp_mult_term = u1 - 2*C*r_b
 
         def recurance_terms(n,An,Bn):
             an = 1/(n * (2*s + n)) * (-u0 * An - (s + n + sigma * abs(kappa)) * Bn)
@@ -392,10 +390,10 @@ def Singular_Power_Series_Terms_Dirac(u_array, r_b, l ,eps ,Z , kappa, c, sigma)
             # S_bn += n * bn
 
 
-            tolerance = eps * max(abs(S_a_val), abs(S_b_val), abs(S_an_val)/n, abs(S_bn_val)/n)
+            tolerance = EPSILON * max(abs(S_a_val), abs(S_b_val), abs(S_an_val)/n, abs(S_bn_val)/n)
             if max(abs(an) , abs(bn)) < tolerance:
 
-                condition1 = abs(r_b * (s * S_a_val + S_an_val) - sigma * abs(kappa) * r_b *S_a_val + ((u0+u1+u2+u3) - 2*c*r_b) * r_b * S_b_val)
+                condition1 = abs(r_b * (s * S_a_val + S_an_val) - sigma * abs(kappa) * r_b *S_a_val + ((u0+u1+u2+u3) - 2*C*r_b) * r_b * S_b_val)
                 condition2 = abs(r_b * ((s+t)*S_b_val + S_bn_val) + sigma * abs(kappa) * r_b * S_b - (u0+u1+u2+u3)*r_b*S_a_val )
 
                 if max(condition1 , condition2) < tolerance:
@@ -410,7 +408,7 @@ def Singular_Power_Series_Terms_Dirac(u_array, r_b, l ,eps ,Z , kappa, c, sigma)
         t = 1
 
         b_term = 2*abs(kappa) + 1
-        a_term = u1 - 2*c*r_b
+        a_term = u1 - 2*C*r_b
 
         a0 = 1.0
         b0 = u1/b_term
@@ -450,10 +448,10 @@ def Singular_Power_Series_Terms_Dirac(u_array, r_b, l ,eps ,Z , kappa, c, sigma)
             S_an += n * an
             S_bn += n * bn
 
-            tolerance = eps * max(abs(S_a), abs(S_b), abs(S_an)/n, abs(S_bn)/n)
+            tolerance = EPSILON * max(abs(S_a), abs(S_b), abs(S_an)/n, abs(S_bn)/n)
 
             if max(abs(an) , abs(bn)) < tolerance:
-                condition1 = abs(r_b * (s * S_a + S_an) - sigma * abs(kappa) * r_b *S_a + ((u0+u1+u2+u3) - 2*c*r_b) * r_b * S_b)
+                condition1 = abs(r_b * (s * S_a + S_an) - sigma * abs(kappa) * r_b *S_a + ((u0+u1+u2+u3) - 2*C*r_b) * r_b * S_b)
                 condition2 = abs(r_b * ((s+t)*S_b + S_bn) + sigma * abs(kappa) * r_b * S_b - (u0+u1+u2+u3)*r_b*S_a )
                 if max(condition1 , condition2)  < tolerance:
                     break
@@ -465,7 +463,7 @@ def Singular_Power_Series_Terms_Dirac(u_array, r_b, l ,eps ,Z , kappa, c, sigma)
         s = abs(kappa) + 1
         t = -1
 
-        a_term1 = u1 - 2*c*r_b
+        a_term1 = u1 - 2*C*r_b
         a_term2 = 2*abs(kappa) + 1
 
         if -a_term1/a_term2 < 0:
@@ -510,10 +508,10 @@ def Singular_Power_Series_Terms_Dirac(u_array, r_b, l ,eps ,Z , kappa, c, sigma)
             S_an += n * an
             S_bn += n * bn
 
-            tolerance = eps * max(abs(S_a), abs(S_b), abs(S_an)/n, abs(S_bn)/n)
+            tolerance = EPSILON * max(abs(S_a), abs(S_b), abs(S_an)/n, abs(S_bn)/n)
 
             if max(abs(an) , abs(bn)) < tolerance:
-                condition1 = abs(r_b * (s * S_a + S_an) - sigma * abs(kappa) * r_b *S_a + ((u0+u1+u2+u3) - 2*c*r_b) * r_b * S_b)
+                condition1 = abs(r_b * (s * S_a + S_an) - sigma * abs(kappa) * r_b *S_a + ((u0+u1+u2+u3) - 2*C*r_b) * r_b * S_b)
 
                 condition2 = abs(r_b * ((s+t)*S_b + S_bn) + sigma * abs(kappa) * r_b * S_b - (u0+u1+u2+u3)*r_b*S_a )
                 if max(condition1 , condition2)  < tolerance:
@@ -536,15 +534,15 @@ def Singular_Power_Series_Terms_Dirac(u_array, r_b, l ,eps ,Z , kappa, c, sigma)
 ### Finding the power series terms for the any mesh step [ra,rb] for ra !=0 in accordance with RADIAL
 ######################################################################################################
 
-def Power_Series_Terms_Dirac(u_array, initial_condition_a, initial_condition_b , r_a, r_b, l, eps, kappa, r0, c, sigma):
+def Power_Series_Terms_Dirac(u_array, initial_condition_a, initial_condition_b , r_a, r_b, l, kappa, sigma):
     #Define the u terms
     u0, u1, u2, u3 = u_array
     u_sum = u0 + u1 + u2 + u3
     h = r_b-r_a
 
-    pre_factor = h/max(r_a,r0)
-    mult_term1 = u0 - 2.0*c*r_a
-    mult_term2 = u1 - 2.0*c*h
+    pre_factor = h/max(r_a,R0)
+    mult_term1 = u0 - 2.0*C*r_a
+    mult_term2 = u1 - 2.0*C*h
     #create the a array and define the intial conditions
     a = [initial_condition_a]
     b = [initial_condition_b]
@@ -603,11 +601,11 @@ def Power_Series_Terms_Dirac(u_array, initial_condition_a, initial_condition_b ,
         S_bn_val = Neaumaier_value(S_bn, Sbn_c)
 
 
-        tolerance = eps * max(abs(S_a_val), abs(S_b_val), abs(S_an_val)/n, abs(S_bn_val)/n)
+        tolerance = EPSILON * max(abs(S_a_val), abs(S_b_val), abs(S_an_val)/n, abs(S_bn_val)/n)
         if max(abs(an) , abs(bn)) < tolerance:
             t1 = r_b * S_an_val
             t2 = -sigma*abs(kappa)*h*S_a_val
-            t3 = (u_sum - 2*c*r_b) * h * S_b_val
+            t3 = (u_sum - 2*C*r_b) * h * S_b_val
             condition1 = t1 + t2 + t3
             scale1 = abs(t1) + abs(t2) + abs(t3)
 
@@ -619,7 +617,7 @@ def Power_Series_Terms_Dirac(u_array, initial_condition_a, initial_condition_b ,
 
 
             #TODO CHECK WETHER THIS SCALING TOLERANCE IS STILL NEEDED?
-            tol_res = eps * max(scale1, scale2, 1.0)
+            tol_res = EPSILON * max(scale1, scale2, 1.0)
             if max(condition1 , condition2) < tol_res:
                 break
 
@@ -642,11 +640,11 @@ def Power_Series_Terms_Dirac(u_array, initial_condition_a, initial_condition_b ,
 ###calculate and stich toghether all the terms needed to solve the power series
 #################################################################################################
 
-def Calc_Series_Terms(mesh_steps, l ,epsilon, T, Z, alpha, kappa, c, sigma, r0, R_au, derivatives, potential_index, phi_r, ratio_max = 0.05, max_subdiv = 200):
-    cnf["Z"]
+def Calc_Series_Terms(mesh_steps, l, T, Z, kappa, sigma, R_au, derivatives, potential_index, phi_r, ratio_max = 0.05, max_subdiv = 200):
+    # cnf["Z"]
     #### l = cnf["angular_momentum_l"]
-    u_parameters0 = Singular_Potential_Parameters_Dirac(mesh_steps[1], T, Z, alpha, r0, R_au, potential_index, phi_r)
-    Series_terms0a , Series_terms0b , initial_condition0a, initial_condition0b, s, t = Singular_Power_Series_Terms_Dirac(u_parameters0 ,mesh_steps[1] ,l ,epsilon ,Z ,kappa ,c ,sigma)
+    u_parameters0 = Singular_Potential_Parameters_Dirac(mesh_steps[1], T, Z, R_au, potential_index, phi_r)
+    Series_terms0a , Series_terms0b , initial_condition0a, initial_condition0b, s, t = Singular_Power_Series_Terms_Dirac(u_parameters0 ,mesh_steps[1] ,l ,Z ,kappa ,sigma)
 
     initial_temp_condition_a = initial_condition0a
     initial_temp_condition_b = initial_condition0b
@@ -671,18 +669,18 @@ def Calc_Series_Terms(mesh_steps, l ,epsilon, T, Z, alpha, kappa, c, sigma, r0, 
                 ra = float(sub_grid[j])
                 rb = float(sub_grid[j+1])
 
-                u_temp_parameter = General_Potential_Parameters_Dirac(ra, rb, l, T, r0, alpha, derivatives)
+                u_temp_parameter = General_Potential_Parameters_Dirac(ra, rb, l, T, derivatives)
 
-                Temp_series_terms_a,Temp_series_terms_b, initial_temp_condition_a, initial_temp_condition_b = Power_Series_Terms_Dirac(u_temp_parameter, initial_temp_condition_a, initial_temp_condition_b, ra , rb, l, epsilon, kappa, r0, c, sigma)
+                Temp_series_terms_a,Temp_series_terms_b, initial_temp_condition_a, initial_temp_condition_b = Power_Series_Terms_Dirac(u_temp_parameter, initial_temp_condition_a, initial_temp_condition_b, ra , rb, l, kappa, sigma)
 
                 if rb == r_b:
                     Series_terms_list_a.append(Temp_series_terms_a)
                     Series_terms_list_b.append(Temp_series_terms_b)
         else:
 
-            u_temp_parameter = General_Potential_Parameters_Dirac(r_a, r_b,l, T, r0, alpha, derivatives)
+            u_temp_parameter = General_Potential_Parameters_Dirac(r_a, r_b,l, T, derivatives)
 
-            Temp_series_terms_a, Temp_series_terms_b, initial_temp_condition_a, initial_temp_condition_b = Power_Series_Terms_Dirac(u_temp_parameter, initial_temp_condition_a, initial_temp_condition_b, r_a , r_b, l, epsilon, kappa, r0, c, sigma)
+            Temp_series_terms_a, Temp_series_terms_b, initial_temp_condition_a, initial_temp_condition_b = Power_Series_Terms_Dirac(u_temp_parameter, initial_temp_condition_a, initial_temp_condition_b, r_a , r_b, l, kappa, sigma)
 
             Series_terms_list_a.append(Temp_series_terms_a)
             Series_terms_list_b.append(Temp_series_terms_b)
@@ -725,7 +723,7 @@ def Solve_Power_Series(list_of_sequence_terms_a, list_of_sequence_terms_b, grid_
 ### Find mminimum range up to which to extend the mesh range used to solve P and Q
 ###################################################################################
 
-def obtain_mesh_range(k,epsilon, Z, R_au, potential_index, phi_r):
+def obtain_mesh_range(k, Z, R_au, potential_index, phi_r):
     kr_min = 20.0
     r_max = 0.01
 
@@ -737,7 +735,7 @@ def obtain_mesh_range(k,epsilon, Z, R_au, potential_index, phi_r):
     if potential_index == 3:
         TAS = 10e-4 * abs(Z_inf)
     else:
-        TAS = max(1e-11, epsilon) * abs(Z_inf)
+        TAS = max(1e-11, EPSILON) * abs(Z_inf)
 
     while abs(RV - Z_inf) >= TAS or (k * r_max <= kr_min):
         r_max *= 2
@@ -755,7 +753,7 @@ def obtain_mesh_range(k,epsilon, Z, R_au, potential_index, phi_r):
 ### Find_rc is a function finding the matching radius rc at which one can normalize the power series by matching it witht he asymptotic behavior
 #################################################################################################################################################
 
-def Find_rc(r_mesh,k,epsilon, Z , R_au, potential_index, phi_r):
+def Find_rc(r_mesh, k, Z , R_au, potential_index, phi_r):
     kr_min = 20.0
     r_grid = np.asarray(r_mesh, dtype = float)
 
@@ -769,7 +767,7 @@ def Find_rc(r_mesh,k,epsilon, Z , R_au, potential_index, phi_r):
     if potential_index == 3:
         TAS = 10e-4 * abs(Z_inf)
     else:
-        TAS = max(1e-11, epsilon) * abs(Z_inf)
+        TAS = max(1e-11, EPSILON) * abs(Z_inf)
 
     idx_rc = None
     for idx in range(len(r_grid)-1 ,2, -1):
@@ -789,7 +787,7 @@ def Find_rc(r_mesh,k,epsilon, Z , R_au, potential_index, phi_r):
 ### of wave functions by matching them at rc with their assymptotic behavior
 ###########################################################################################
 
-def Normalization_Constant(r_mesh, idx_rc, P_mesh, Q_mesh, Analytic_normalization_const, T, k, eta, W, kappa, Z, c, Lambda, sigma, epsilon, R_au, potential_index, phi_r):
+def Normalization_Constant(r_mesh, idx_rc, P_mesh, Q_mesh, Analytic_normalization_const, T, k, eta, W, kappa, Z, Lambda, sigma, R_au, potential_index, phi_r):
     P = P_mesh[idx_rc]
     Q = Q_mesh[idx_rc]
 
@@ -799,7 +797,7 @@ def Normalization_Constant(r_mesh, idx_rc, P_mesh, Q_mesh, Analytic_normalizatio
 
     if abs(Z) < 1:
         l = (-kappa -1) if (kappa < 0) else kappa
-        mult_fact = np.sqrt(T/(T + 2*c**2))
+        mult_fact = np.sqrt(T/(T + 2*C**2))
 
 
         nu = l + 0.5
@@ -833,15 +831,15 @@ def Normalization_Constant(r_mesh, idx_rc, P_mesh, Q_mesh, Analytic_normalizatio
         G_lm = mp.coulombg(Lambda-1 , eta, x)
 
 
-        mult_term_addition = (np.sqrt(Lambda**2 + eta**2))*k*c
-        mult_term_subtraction = (Lambda * c**2 - kappa * W)
+        mult_term_addition = (np.sqrt(Lambda**2 + eta**2))*k*C
+        mult_term_subtraction = (Lambda * C**2 - kappa * W)
 
         def upper_Dirac_func(Coulomb_func, Coulomb_min_func):
-            return Analytic_normalization_const * ((kappa + Lambda) * mult_term_addition* Coulomb_func + Z/c * mult_term_subtraction * Coulomb_min_func)
+            return Analytic_normalization_const * ((kappa + Lambda) * mult_term_addition* Coulomb_func + Z/C * mult_term_subtraction * Coulomb_min_func)
 
 
         def lower_Dirac_func(Coulomb_func, Coulomb_min_func):
-            return - Analytic_normalization_const * (Z/c * mult_term_addition * Coulomb_func + (kappa + Lambda) * mult_term_subtraction * Coulomb_min_func)
+            return - Analytic_normalization_const * (Z/C * mult_term_addition * Coulomb_func + (kappa + Lambda) * mult_term_subtraction * Coulomb_min_func)
 
         PIA = upper_Dirac_func(F_l, F_lm)
         QA = lower_Dirac_func(F_l, F_lm)
@@ -850,7 +848,7 @@ def Normalization_Constant(r_mesh, idx_rc, P_mesh, Q_mesh, Analytic_normalizatio
         QB = lower_Dirac_func(G_l, G_lm)
 
     V = float(potential(r_c, Z, R_au, potential_index, phi_r))
-    FG = (T - V + 2*c**2)/c
+    FG = (T - V + 2*C**2)/C
 
     P_prime = -kappa/r_c * P + FG * Q
 
@@ -868,7 +866,7 @@ def Normalization_Constant(r_mesh, idx_rc, P_mesh, Q_mesh, Analytic_normalizatio
     COS = mp.cos(delta)
     SIN = mp.sin(delta)
 
-    if abs(P) > epsilon:
+    if abs(P) > EPSILON:
         A = (COS * PIA + SIN * PIB) / P
     else:
         A = (COS * PIAP + SIN * PIBP) / P_prime
@@ -882,12 +880,12 @@ def Normalization_Constant(r_mesh, idx_rc, P_mesh, Q_mesh, Analytic_normalizatio
 ### Analytic function solves the analytic coulomb wave functions P and Q using mp.math CoulombF and Coulombg functions
 #######################################################################################################################
 
-def Analytic(Z,eta, k, W, kappa, c, Lambda, Analytic_normalization_const, T, delta, N_points, rc):
+def Analytic(Z,eta, k, W, kappa, Lambda, Analytic_normalization_const, T, delta, N_points, rc):
 
     r = np.linspace(max(0,rc-1.5),rc+1.5,N_points)
     if abs(Z) < 1:
         x = k * r
-        mult_fact = np.sqrt(T / (T+2*c**2))
+        mult_fact = np.sqrt(T / (T+2*C**2))
         if kappa < 0:
             l = -kappa - 1
             P = x * spherical_jn(l, x)
@@ -924,13 +922,13 @@ def Analytic(Z,eta, k, W, kappa, c, Lambda, Analytic_normalization_const, T, del
         G_lambda = CoulombG_reduced(Lambda,Z,r)
         G_lambda_min = CoulombG_reduced(Lambda -1, Z,r)
 
-        Dirac_upper_analytic = Analytic_normalization_const * ((kappa+Lambda) * np.sqrt(Lambda**2 + eta**2)*k*c*U_reg_lambda + Z/c * (Lambda * c**2 - kappa * W) * U_reg_lambda_min)
+        Dirac_upper_analytic = Analytic_normalization_const * ((kappa+Lambda) * np.sqrt(Lambda**2 + eta**2)*k*C*U_reg_lambda + Z/C * (Lambda * C**2 - kappa * W) * U_reg_lambda_min)
 
-        Dirac_lower_analytic = -Analytic_normalization_const * (Z/c * np.sqrt(Lambda**2 + eta**2)*k*c*U_reg_lambda + (kappa + Lambda) * (Lambda* c**2 - kappa * W )* U_reg_lambda_min)
+        Dirac_lower_analytic = -Analytic_normalization_const * (Z/C * np.sqrt(Lambda**2 + eta**2)*k*C*U_reg_lambda + (kappa + Lambda) * (Lambda* C**2 - kappa * W )* U_reg_lambda_min)
 
-        irreg_Dirac_upper_analytic = Analytic_normalization_const * ((kappa+Lambda) * np.sqrt(Lambda**2 + eta**2)*k*c* G_lambda + Z/c * (Lambda * c**2 - kappa * W) * G_lambda_min)
+        irreg_Dirac_upper_analytic = Analytic_normalization_const * ((kappa+Lambda) * np.sqrt(Lambda**2 + eta**2)*k*C* G_lambda + Z/C * (Lambda * C**2 - kappa * W) * G_lambda_min)
 
-        irreg_Dirac_lower_analytic = -Analytic_normalization_const * (Z/c * np.sqrt(Lambda**2 + eta**2)*k*c* G_lambda + (kappa + Lambda) * (Lambda* c**2 - kappa * W )* G_lambda_min)
+        irreg_Dirac_lower_analytic = -Analytic_normalization_const * (Z/C * np.sqrt(Lambda**2 + eta**2)*k*C* G_lambda + (kappa + Lambda) * (Lambda* C**2 - kappa * W )* G_lambda_min)
 
 
         P = np.cos(delta) * Dirac_upper_analytic + np.sin(delta) * irreg_Dirac_upper_analytic
@@ -942,25 +940,19 @@ def Analytic(Z,eta, k, W, kappa, c, Lambda, Analytic_normalization_const, T, del
 ### Visualize function plots the wavefuncs P and Q for the given potential against the analytic coulomb potential
 #################################################################################################################
 
-def Visualize(config):
+def Visualize(config,cnf):
 
     ### DECLARE PARAMETERS
-    A = config["parameters"]["mass_number"]
-    Zf = config["parameters"]["atomic_number"]
+    A = cnf["A"]
+    Zf = cnf["Z"]
     Z = -Zf
-    angular_momentum_quantum_number = config["parameters"]["angular_momentum_l"]
-    kappa = config["parameters"]["kappa"]
+    angular_momentum_quantum_number = cnf["angular_momentum_l"]
+    kappa = cnf["kappa"]
     sigma = -np.sign(kappa)
-    c = 137.03599
-    alpha = 1.0/c
-    epsilon = 1e-15
-    Lambda = np.sqrt(kappa**2 - (Z/c)**2)
-
+    Lambda = np.sqrt(kappa**2 - (Z/C)**2)
 
     rN = 1.2e-15 * A ** (1 / 3) # Nuclear radius
-    au = 5.29177210903e-11 #Bohr radius
-    R_au = rN/au # Nuclear radius in au
-    E_hatree = 27.211386 #eV
+    R_au = rN/AU # Nuclear radius in au
 
     potential_index = config["generator"]["potential_index"]
     if potential_index == 3:
@@ -970,11 +962,11 @@ def Visualize(config):
         phi_r = 0
 
     Plotting_energy = config["generator"]["T_plot_energy-MeV"]
-    T = Plotting_energy * 1e6 / E_hatree
-    W = T + c**2
-    k = np.sqrt(T*(T + 2*c**2))/c
-    eta =  alpha* Z *W/(k*c)
-    Analytic_normalization_const = 1 /Lambda * 1/np.sqrt((Z/c)**2 * (W+c**2)**2 + (kappa + Lambda)**2 *(k*c)**2)
+    T = Plotting_energy * 1e6 / E_HARTREE
+    W = T + C**2
+    k = np.sqrt(T*(T + 2*C**2))/C
+    eta =  ALPHA* Z *W/(k*C)
+    Analytic_normalization_const = 1 /Lambda * 1/np.sqrt((Z/C)**2 * (W+C**2)**2 + (kappa + Lambda)**2 *(k*C)**2)
 
 
     r_N = config["mesh_grid"]["num_mesh_steps"]
@@ -983,7 +975,7 @@ def Visualize(config):
     DRN = config["mesh_grid"]["upper_limit_step_size"]#Upper limit on distance between points near the end regime (make sure this stays small enough or wavefunc will not converge at larger distances r)
 
 
-    r_END = obtain_mesh_range(k, epsilon, Z, R_au, potential_index, phi_r)
+    r_END = obtain_mesh_range(k, Z, R_au, potential_index, phi_r)
 
     if r_N is None:
         r_N = 10000
@@ -996,7 +988,7 @@ def Visualize(config):
 
     print(f"resolution set to {r_N} mesh points")
     mesh_points = mesh_grid(r_END, A_grid, r_N, r2, DRN, R_au)
-    rc_idx = Find_rc(mesh_points, k, epsilon, Z, R_au, potential_index, phi_r)
+    rc_idx = Find_rc(mesh_points, k, Z, R_au, potential_index, phi_r)
 
     ###Setting up cubic spline
     N_V = 50000
@@ -1014,15 +1006,15 @@ def Visualize(config):
 
 
 
-    series_terms_upper, series_terms_lower = Calc_Series_Terms(mesh_points,angular_momentum_quantum_number, epsilon, T, Z , alpha, kappa, c, sigma, r0 ,R_au, derivatives, potential_index, phi_r)
+    series_terms_upper, series_terms_lower = Calc_Series_Terms(mesh_points,angular_momentum_quantum_number, T, Z , kappa, sigma, R_au, derivatives, potential_index, phi_r)
     wave_function_upper, wave_function_lower = Solve_Power_Series(series_terms_upper, series_terms_lower, mesh_points)
-    N, delta, r_c = Normalization_Constant(mesh_points, rc_idx ,wave_function_upper,wave_function_lower, Analytic_normalization_const, T, k, eta, W, kappa, Z, c, Lambda, sigma, epsilon, R_au, potential_index, phi_r)
+    N, delta, r_c = Normalization_Constant(mesh_points, rc_idx ,wave_function_upper,wave_function_lower, Analytic_normalization_const, T, k, eta, W, kappa, Z, Lambda, sigma, R_au, potential_index, phi_r)
 
     if potential_index == 3:
         Z_match = -2.0
-        eta_match = alpha* Z_match *W/(k*c)
-        Lambda_match = np.sqrt(kappa**2 - (Z_match/c)**2)
-        Analytic_normalization_const_match = 1 /Lambda_match * 1/np.sqrt((Z_match/c)**2 * (W+c**2)**2 + (kappa + Lambda_match)**2 *(k*c)**2)
+        eta_match = ALPHA* Z_match *W/(k*C)
+        Lambda_match = np.sqrt(kappa**2 - (Z_match/C)**2)
+        Analytic_normalization_const_match = 1 /Lambda_match * 1/np.sqrt((Z_match/C)**2 * (W+C**2)**2 + (kappa + Lambda_match)**2 *(k*C)**2)
 
 
     else:
@@ -1032,7 +1024,7 @@ def Visualize(config):
         Analytic_normalization_const_match = Analytic_normalization_const
 
 
-    r_analytic, P_analytic, Q_analytic = Analytic(Z_match,eta_match, k ,W, kappa, c, Lambda_match, Analytic_normalization_const_match, T, delta, 100000, mesh_points[rc_idx])
+    r_analytic, P_analytic, Q_analytic = Analytic(Z_match,eta_match, k ,W, kappa, Lambda_match, Analytic_normalization_const_match, T, delta, 100000, mesh_points[rc_idx])
 
     plt.figure(figsize=(12,8))
     plt.plot(mesh_points, wave_function_upper*N , label = "P(r) - Normalized")
@@ -1050,24 +1042,15 @@ def Visualize(config):
     plt.show()
 
 
-def Generate_Fermi_Data(config):
+def Generate_Fermi_Data(config,cnf):
     ### DECLARE PARAMETERS
-    A = config["parameters"]["mass_number"]
-    Zf = config["parameters"]["atomic_number"]
+    A = cnf["A"]
+    Zf = cnf["Z"]
     Z = -Zf
-    angular_momentum_quantum_number = config["parameters"]["angular_momentum_l"]
-    kappa = config["parameters"]["kappa"]
-    sigma = -np.sign(kappa)
-    c = 137.03599
-    alpha = 1.0/c
-    epsilon = 1e-15
-    Lambda = np.sqrt(kappa**2 - (Z/c)**2)
-
+    angular_momentum_quantum_number = cnf["angular_momentum_l"]
 
     rN = 1.2e-15 * A ** (1 / 3) # Nuclear radius
-    au = 5.29177210903e-11 #Bohr radius
-    R_au = rN/au # Nuclear radius in au
-    E_hatree = 27.211386 #eV
+    R_au = rN/AU # Nuclear radius in au
 
 
     potential_index = config["generator"]["potential_index"]
@@ -1081,7 +1064,7 @@ def Generate_Fermi_Data(config):
     T_start = config["generator"]["T_start-MeV"]
     n_samples = config["generator"]["num_samples"]
 
-    T_range = np.geomspace(T_start, Q, n_samples) * 1e6 /E_hatree
+    T_range = np.geomspace(T_start, Q, n_samples) * 1e6 /E_HARTREE
 
 
 
@@ -1090,8 +1073,8 @@ def Generate_Fermi_Data(config):
     r0 = 1e-15 ## to avoid 1/r division by 0
     DRN = config["mesh_grid"]["upper_limit_step_size"]#Upper limit on distance between points near the end regime (make sure this stays small enough or wavefunc will not converge at larger distances r)
 
-    k_max = np.sqrt(T_range[0]*(T_range[0] + 2*c**2))/c
-    r_END = obtain_mesh_range(k_max, epsilon, Z, R_au, potential_index, phi_r)
+    k_max = np.sqrt(T_range[0]*(T_range[0] + 2*C**2))/C
+    r_END = obtain_mesh_range(k_max, Z, R_au, potential_index, phi_r)
 
     if r_N is None:
         r_N = 10000
@@ -1119,40 +1102,49 @@ def Generate_Fermi_Data(config):
 
     derivatives = [RV_spline, RV_spline_prime, RV_spline_second, RV_spline_third]
 
+    kappa = config["parameters"]["kappa"]
+    kappa_sign = [1,-1]
 
-    P_list = []
-    Q_list = []
-    aP_list = []
-    aQ_list = []
-
-    for i, T in enumerate(tqdm(T_range, desc = "Solving Dirac functions over energy range")):
-        W = T + c**2
-        k = np.sqrt(T*(T + 2*c**2))/c
-        eta = alpha* Z*W/(k*c)
-        Analytic_normalization_const = 1 /Lambda * 1/np.sqrt((Z/c)**2 * (W+c**2)**2 + (kappa + Lambda)**2 *(k*c)**2)
-
-        print(f"Finding wave function for T = {T}, iter = {i}, eta = {eta}")
-        rc_idx = Find_rc(mesh_points, k, epsilon, Z, R_au, potential_index, phi_r)
-        series_terms_upper, series_terms_lower = Calc_Series_Terms(mesh_points,angular_momentum_quantum_number, epsilon, T, Z , alpha, kappa, c, sigma, r0 ,R_au, derivatives, potential_index, phi_r)
-        wave_function_upper, wave_function_lower = Solve_Power_Series(series_terms_upper, series_terms_lower, mesh_points)
-        N, delta, r_c = Normalization_Constant(mesh_points, rc_idx ,wave_function_upper,wave_function_lower, Analytic_normalization_const, T, k, eta, W, kappa, Z, c, Lambda, sigma, epsilon, R_au, potential_index, phi_r)
-
-        P_list.append(N*wave_function_upper)
-        Q_list.append(N*wave_function_lower)
+    for i , sign in enumerate(kappa_sign):
+        kappa *= sign
+        print(f"Performing run ({i+1}/{len(kappa_sign)}) with kappa = {kappa:+d} ")
+        sigma = -np.sign(kappa)
+        Lambda = np.sqrt(kappa**2 - (Z/C)**2)
 
 
-    P_arr = np.asarray(P_list, dtype = float)
-    Q_arr = np.asarray(Q_list, dtype = float)
-    r_arr = np.asarray(mesh_points, dtype = float)
-    T_arr = np.asarray(T_range, dtype = float)
+        P_list = []
+        Q_list = []
+        aP_list = []
+        aQ_list = []
 
-    filename = f"potential_{potential_index}_kappa_{kappa:+d}_Z{Zf}_A{A}.npz"
+        for i, T in enumerate(tqdm(T_range, desc = "Solving Dirac functions over energy range")):
+            W = T + C**2
+            k = np.sqrt(T*(T + 2*C**2))/C
+            eta = ALPHA* Z*W/(k*C)
+            Analytic_normalization_const = 1 /Lambda * 1/np.sqrt((Z/C)**2 * (W+C**2)**2 + (kappa + Lambda)**2 *(k*C)**2)
 
-    output_directory = Path(config["paths"]["output_directory"])
-    output_directory.mkdir(parents=True, exist_ok=True)
-    file_path = output_directory / filename
+            print(f"Finding wave function for T = {T}, iter = {i}, eta = {eta}")
+            rc_idx = Find_rc(mesh_points, k, Z, R_au, potential_index, phi_r)
+            series_terms_upper, series_terms_lower = Calc_Series_Terms(mesh_points,angular_momentum_quantum_number, T, Z , kappa, sigma ,R_au, derivatives, potential_index, phi_r) #### Currently can only remove l and Z but replace it with cnf. that is 2 for 1? IS that worth it?
+            wave_function_upper, wave_function_lower = Solve_Power_Series(series_terms_upper, series_terms_lower, mesh_points)
+            N, delta, r_c = Normalization_Constant(mesh_points, rc_idx ,wave_function_upper,wave_function_lower, Analytic_normalization_const, T, k, eta, W, kappa, Z, Lambda, sigma, R_au, potential_index, phi_r)
 
-    np.savez_compressed(file_path, T = T_arr, r = r_arr, P = P_arr, Q = Q_arr)
+            P_list.append(N*wave_function_upper)
+            Q_list.append(N*wave_function_lower)
+
+
+        P_arr = np.asarray(P_list, dtype = float)
+        Q_arr = np.asarray(Q_list, dtype = float)
+        r_arr = np.asarray(mesh_points, dtype = float)
+        T_arr = np.asarray(T_range, dtype = float)
+
+        filename = f"potential_{potential_index}_kappa_{kappa:+d}_Z{Zf}_A{A}.npz"
+
+        output_directory = Path(config["paths"]["output_directory"])
+        output_directory.mkdir(parents=True, exist_ok=True)
+        file_path = output_directory / filename
+
+        np.savez_compressed(file_path, T = T_arr, r = r_arr, P = P_arr, Q = Q_arr)
 
 
 
