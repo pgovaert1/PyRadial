@@ -15,7 +15,7 @@ def positive_float(value):
 def positive_int(value):
     val = int(value)
     if val < 0:
-        raise argparse.ArgumentTypeError("Number of energy samples must be more than 0")
+        raise argparse.ArgumentTypeError("Number must be positive")
     return val
 
 def clean_name(name):
@@ -42,8 +42,8 @@ def main():
     parser.add_argument("--output_dir", type = clean_name, help = f"Output directory name, (default from config: {config["paths"]["output_directory"]}) ")
 
     #Parameter parses
-    parser.add_argument("--atomic_num", type = positive_int, help = f"Atomic number (Z) given as posivite integer value, (default from config: {config["parameters"]["atomic_number"]})")
-    parser.add_argument("--mass_number", type = positive_int, help = f"Mass number (A), (default from config: {config["parameters"]["mass_number"]})")
+    parser.add_argument("--Z", type = int, help = f"Atomic number (Z) given as posivite integer value, (default from config: {config["parameters"]["atomic_number"]})")
+    parser.add_argument("--A", type = positive_int, help = f"Mass number (A), (default from config: {config["parameters"]["mass_number"]})")
     parser.add_argument("--angular_momentum", type = int, help = f"Angular momentum (l), (default from config: {config["parameters"]["angular_momentum_l"]})")
     parser.add_argument("--kappa", type = int, help = f"Kappa, (default from config: { config["parameters"]["kappa"]:+d} )")
 
@@ -78,11 +78,11 @@ def main():
         config["paths"]["output_directory"] = args.output_dir
 
     # Parameter overrides
-    if args.atomic_num is not None:
-        config["parameters"]["atomic_number"] = args.atomic_num
+    if args.Z is not None:
+        config["parameters"]["atomic_number"] = args.Z
 
-    if args.mass_number is not None:
-        config["parameters"]["mass_number"] = args.mass_number
+    if args.A is not None:
+        config["parameters"]["mass_number"] = args.A
 
     if args.angular_momentum is not None:
         config["parameters"]["angular_momentum_l"] = args.angular_momentum
@@ -101,6 +101,15 @@ def main():
 
 
 
+  ####
+
+  json_file = json.load(¨path¨)
+  cnf = make_nice(json_file)
+  import thomas_fermi.py
+  thomas_fermi.give_me_the_phi(mesh, cnf)
+
+  ####
+
 
     mode = config["generator"]["mode"]
     potential = config["generator"]["potential_index"]
@@ -116,6 +125,7 @@ def main():
     if mode == "generate":
         print(f"Saving output in \\{config["paths"]["output_directory"]} directory")
         Generate_Fermi_Data(config)
+        #### Generate_Fermi_Data(cnf)
     elif mode == "plot":
         Visualize(config)
     elif mode == "data":

@@ -168,7 +168,7 @@ def Find_X(A_grid, x_min = 1e-10):
     return 0.5* (x_min + x_max)
 
 
-def mesh_grid(r_END, A_grid, N, r2, DRN):
+def mesh_grid(r_END, A_grid, N, r2, DRN, nuc_radius):
 
 
     if not (0.5 < A_grid < 1.0):
@@ -204,6 +204,15 @@ def mesh_grid(r_END, A_grid, N, r2, DRN):
                 high = mid
 
         r[i] = 0.5*(low+high)
+
+
+    for i in range(len(r)-1):
+        if r[i] < nuc_radius and r[i+1] > nuc_radius:
+            r = np.insert(r,i+1,nuc_radius)
+            break
+        elif r[i+1] > nuc_radius:
+            break
+
     return r
 
 #############################################################################################################
@@ -634,7 +643,8 @@ def Power_Series_Terms_Dirac(u_array, initial_condition_a, initial_condition_b ,
 #################################################################################################
 
 def Calc_Series_Terms(mesh_steps, l ,epsilon, T, Z, alpha, kappa, c, sigma, r0, R_au, derivatives, potential_index, phi_r, ratio_max = 0.05, max_subdiv = 200):
-
+    cnf["Z"]
+    #### l = cnf["angular_momentum_l"]
     u_parameters0 = Singular_Potential_Parameters_Dirac(mesh_steps[1], T, Z, alpha, r0, R_au, potential_index, phi_r)
     Series_terms0a , Series_terms0b , initial_condition0a, initial_condition0b, s, t = Singular_Power_Series_Terms_Dirac(u_parameters0 ,mesh_steps[1] ,l ,epsilon ,Z ,kappa ,c ,sigma)
 
@@ -985,7 +995,7 @@ def Visualize(config):
         A_grid = ((r_END - (r_N - 1) *r2) / r_END) * (DRN / (DRN -r2))
 
     print(f"resolution set to {r_N} mesh points")
-    mesh_points = mesh_grid(r_END, A_grid, r_N, r2, DRN)
+    mesh_points = mesh_grid(r_END, A_grid, r_N, r2, DRN, R_au)
     rc_idx = Find_rc(mesh_points, k, epsilon, Z, R_au, potential_index, phi_r)
 
     ###Setting up cubic spline
@@ -1093,7 +1103,7 @@ def Generate_Fermi_Data(config):
         A_grid = ((r_END - (r_N - 1) *r2) / r_END) * (DRN / (DRN -r2))
 
     print(f"resolution set to {r_N} mesh points")
-    mesh_points = mesh_grid(r_END, A_grid, r_N, r2, DRN)
+    mesh_points = mesh_grid(r_END, A_grid, r_N, r2, DRN, R_au)
 
     ###Setting up cubic spline
     N_V = 50000
@@ -1136,7 +1146,7 @@ def Generate_Fermi_Data(config):
     r_arr = np.asarray(mesh_points, dtype = float)
     T_arr = np.asarray(T_range, dtype = float)
 
-    filename = f"potential_{potential_index}_kappa_{kappa:+d}_Z{Z}_A{A}.npz"
+    filename = f"potential_{potential_index}_kappa_{kappa:+d}_Z{Zf}_A{A}.npz"
 
     output_directory = Path(config["paths"]["output_directory"])
     output_directory.mkdir(parents=True, exist_ok=True)

@@ -1,8 +1,10 @@
 #Ignore all npz files
 *.npz
 *.txt
+*-swp
 # Ignore directories
 out/
 plots/
+phase_space_results/
 
 __pycache__
