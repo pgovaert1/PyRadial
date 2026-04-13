@@ -5,6 +5,9 @@ import json
 import argparse
 from Dirac_numerical_radial import Visualize, Generate_Fermi_Data
 from Simkovic import Calc_double_beta_decay_spectrum
+from isotopes import ISOTOPES
+
+
 
 def positive_float(value):
     val = float(value)
@@ -52,6 +55,9 @@ def main():
     parser.add_argument("--resolution", type = positive_int, help = f"Number of steps mesh is made of, (default the code will roughly calculate minimum resolution needed)")
     parser.add_argument("--DRN", type = positive_float, help = f"Upper limit step size grid, (default from config: {config["mesh_grid"]["upper_limit_step_size"]})")
 
+    # Isotope selection
+    parser.add_argument("--isotope", type = str, choices = ["Xe136", "Mo100", "Nd150"], help = f"select an isotope from the isootes.py file for which to run the scripts, (default from config: { config["isotope"]})")
+
 
     args = parser.parse_args()
 
@@ -98,38 +104,73 @@ def main():
         config["mesh_grid"]["upper_limit_step_size"] = args.DRN
 
 
+    # Istopte override
+    if args.isotope is not None:
+        config["isotope"] = args.isotope
 
 
-
-  ####
-
-  json_file = json.load(¨path¨)
-  cnf = make_nice(json_file)
-  import thomas_fermi.py
-  thomas_fermi.give_me_the_phi(mesh, cnf)
-
-  ####
 
 
     mode = config["generator"]["mode"]
     potential = config["generator"]["potential_index"]
-    if potential == 0:
-        print(f"calling '{mode}' function for potential 0: Z/r")
-    if potential == 1:
-        print(f"calling '{mode}' function for potential 1: Z/r + V0 exp(-Ar)")
-    if potential == 2:
-        print(f"calling '{mode}' function for potential 2: (for r<R); Z/2R (3-(r/R)^2) (for r >= R); Z/r")
-    if potential == 3:
-        print(f"calling '{mode}' function for potential 3: Thomas Fermi")
+    def print_potential(potential_index):
+        if potential_index == 0:
+            print(f"calling '{mode}' function for potential 0: Z/r")
+        if potential_index == 1:
+            print(f"calling '{mode}' function for potential 1: Z/r + V0 exp(-Ar)")
+        if potential_index == 2:
+            print(f"calling '{mode}' function for potential 2: (for r<R); Z/2R (3-(r/R)^2) (for r >= R); Z/r")
+        if potential_index == 3:
+            print(f"calling '{mode}' function for potential 3: Thomas Fermi")
+
+
+    # write a smaller config file needed for Dira_numer_radial.py
+    cnf ={
+        "Z": config["parameters"]["atomic_number"],
+        "A": config["parameters"]["mass_number"],
+        "Q": config["generator"]["T_end-MeV"],
+        "angular_momentum_l": config["parameters"]["angular_momentum_l"],
+        "kappa": config["parameters"]["kappa"]
+        }
+
 
     if mode == "generate":
+        print_potential(potential)
         print(f"Saving output in \\{config["paths"]["output_directory"]} directory")
-        Generate_Fermi_Data(config)
-        #### Generate_Fermi_Data(cnf)
+        Generate_Fermi_Data(config,cnf)
     elif mode == "plot":
-        Visualize(config)
+        print_potential(potential)
+        Visualize(config,cnf)
     elif mode == "data":
-        Calc_double_beta_decay_spectrum(config)
+        print_potential(potential)
+        Calc_double_beta_decay_spectrum(config,cnf)
+    elif mode == None: #### MAIN DRIVER FUNCTION
+        iso = config["isotope"]
+        model = config["nuclear_model"]
+        iso_data = ISOTOPES[iso]
+
+        cnf ={
+        "Z": iso_data["Z"],
+        "A": iso_data["A"],
+        "Q": iso_data[model],
+        "angular_momentum_l": config["parameters"]["angular_momentum_l"],
+        "kappa": config["parameters"]["kappa"],
+        }
+
+
+        print(f"Generating data for {iso} using {model} model with potential {potential}")
+        print(f"Output is sent to Dirac_{config["isotope"]}")
+        Generate_Fermi_Data(config,cnf)
+
+        print(f"Generating data complete ")
+        print(f"Calculating phase space results and plotting Fermi function and 2νββ Spectrum\n")
+        Calc_double_beta_decay_spectrum(config,cnf)
+
+        print("Done")
+
+
+
+
     else:
         raise ValueError("Unkown mode: {mode}")
 
