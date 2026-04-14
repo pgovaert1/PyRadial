@@ -1,6 +1,6 @@
 {
 
- "project_name" : "Dirac_Xe136",
+
  "interaction" : "2nbb",
  "isotope" : "Xe136",
  "nuclear_model" : "QRPA_Simko_2018",
@@ -8,7 +8,7 @@
  "electrostatic_potential_model" : "Analytical",
  "ho_correction": [],
  "bin_size [keV]" : 10,
- "output_path" : "/home/saelmo/Desktop/output/",
+
 
 
 
