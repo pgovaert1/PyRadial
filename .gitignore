@@ -1,4 +1,4 @@
-#Ignore all npz files
+#Ignore all files
 *.npz
 *.txt
 *-swp
@@ -6,5 +6,5 @@
 out/
 plots/
 phase_space_results/
-
+Dirac*
 __pycache__
