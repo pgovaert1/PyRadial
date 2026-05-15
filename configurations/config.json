@@ -38,6 +38,6 @@
         "output_file": "Test.npz",
 	"output_results_file": "results.txt",
 	"plot_directory": "plots",
-        "output_directory": "out"
+        "output_directory": null
         }
 }
