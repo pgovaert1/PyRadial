@@ -3,9 +3,12 @@
 
 import json
 import argparse
-from Dirac_numerical_radial import Visualize, Generate_Fermi_Data
-from Simkovic import Calc_double_beta_decay_spectrum
-from isotopes import ISOTOPES
+
+from scipy.optimize import bracket
+from algorithms.Dirac_numerical_radial import Visualize, Generate_Fermi_Data
+from algorithms.Simkovic import Calc_double_beta_decay_spectrum
+from configurations.isotopes import ISOTOPES
+
 
 
 
@@ -42,7 +45,7 @@ def main():
     parser.add_argument("--Q" , type = positive_float, help = f"Energy differnce (Q), (default from config: {config["generator"]["T_end-MeV"]})")
 
     #Paths parses
-    parser.add_argument("--output_dir", type = clean_name, help = f"Output directory name, (default from config: {config["paths"]["output_directory"]}) ")
+    parser.add_argument("--output_dir", type = clean_name, help = f"Output directory name, (default from config: Dirac_[Isotope name][Atomic number]) ")
 
     #Parameter parses
     parser.add_argument("--Z", type = int, help = f"Atomic number (Z) given as posivite integer value, (default from config: {config["parameters"]["atomic_number"]})")
@@ -56,7 +59,7 @@ def main():
     parser.add_argument("--DRN", type = positive_float, help = f"Upper limit step size grid, (default from config: {config["mesh_grid"]["upper_limit_step_size"]})")
 
     # Isotope selection
-    parser.add_argument("--isotope", type = str, choices = ["Xe136", "Mo100", "Nd150"], help = f"select an isotope from the isootes.py file for which to run the scripts, (default from config: { config["isotope"]})")
+    parser.add_argument("--isotope", type = str, choices = ["Xe136", "Mo100", "Nd150"], help = f"select an isotope from the isotopes.py file for which to run the scripts, (default from config: { config["isotope"]})")
 
 
     args = parser.parse_args()
@@ -111,8 +114,23 @@ def main():
 
 
 
+
     mode = config["generator"]["mode"]
     potential = config["generator"]["potential_index"]
+
+
+    if potential == 0:
+        potential_name = "pure Coulomb potential V(r) = Z/r"
+    elif potential == 1:
+        potential_name = "Z/r + V0 exp(-Ar)"
+    elif potential== 2:
+       potential_name = "finite size Coulomb potential. (for r<R); V(r) = Z/2R * (3-(r/R)^2), (for r >= R); V(r) = Z/r"
+    elif potential == 3:
+        potential_name =  "Thomas Fermi potential"
+    else:
+        raise RuntimeError("Invaled potential index given")
+
+
     def print_potential(potential_index):
         if potential_index == 0:
             print(f"calling '{mode}' function for potential 0: Z/r")
@@ -124,11 +142,17 @@ def main():
             print(f"calling '{mode}' function for potential 3: Thomas Fermi")
 
 
+
+
+    iso = config["isotope"]
+    isotope_data = ISOTOPES[iso]
+
+
     # write a smaller config file needed for Dira_numer_radial.py
     cnf ={
-        "Z": config["parameters"]["atomic_number"],
-        "A": config["parameters"]["mass_number"],
-        "Q": config["generator"]["T_end-MeV"],
+        "Z": isotope_data["Z"],
+        "A": isotope_data["A"],
+        "Q": isotope_data["Q"],
         "angular_momentum_l": config["parameters"]["angular_momentum_l"],
         "kappa": config["parameters"]["kappa"]
         }
@@ -144,22 +168,19 @@ def main():
     elif mode == "data":
         print_potential(potential)
         Calc_double_beta_decay_spectrum(config,cnf)
-    elif mode == None: #### MAIN DRIVER FUNCTION
+    elif mode == None:
         iso = config["isotope"]
         model = config["nuclear_model"]
         iso_data = ISOTOPES[iso]
 
-        cnf ={
-        "Z": iso_data["Z"],
-        "A": iso_data["A"],
-        "Q": iso_data[model],
-        "angular_momentum_l": config["parameters"]["angular_momentum_l"],
-        "kappa": config["parameters"]["kappa"],
-        }
 
 
-        print(f"Generating data for {iso} using {model} model with potential {potential}")
-        print(f"Output is sent to Dirac_{config["isotope"]}")
+        print(f"Generating data for {iso} using {model} model with {potential_name}")
+        if config["paths"]["output_directory"] is None:
+            print(f"Output is sent to Dirac_{config["isotope"]}")
+        else:
+            print(f"Output is sent to {config["paths"]["output_directory"]}")
+
         Generate_Fermi_Data(config,cnf)
 
         print(f"Generating data complete ")

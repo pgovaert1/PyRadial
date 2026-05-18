@@ -3,8 +3,10 @@
 *.txt
 *-swp
 # Ignore directories
-out/
+out*
+out_fortran/
 plots/
 phase_space_results/
-Dirac*
+test* 
+resolution_test
 __pycache__

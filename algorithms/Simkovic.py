@@ -15,14 +15,80 @@ from scipy.integrate import nquad
 from scipy.integrate import quad
 from scipy.interpolate import interp1d
 from pathlib import Path
+import mpmath as mp
 import os
+import glob, re
 from physics_constants import ME, ALPHA, GF, VUD, HBAR_C, GA, AU, C, E_HARTREE
 
 
 Gbeta = GF * VUD # Effective weak coupling constant in MeV^-2
-c2n = ME * (Gbeta * ME ** 2)**4 / (8 * np.pi**7) #### PREVIOUS CODE HAD A DIVISION BY np.log(2) BUT THIS IS ONLY WANTED FOR THE MATRIX ELEMENTS G, NOT F
+c2n = ME * (Gbeta * ME ** 2)**4 / (8 * np.pi**7)
 MeVtoyr = (365.25 * 24 * 3600) * 2.998e8 / (1e-15 * HBAR_C)
 MGT1, MGT3, MGT5, xi31, xi51 = 0.0104, 0.00403, 0.00126, 0.3867, 0.1207 # Simkovic NMEs for 136Xe
+
+#### FORTRAN DATA EXTRACTION
+
+def Fortran_data():
+    directory = "out_fortran"
+    P_values = []
+    E_values = []
+
+    pattern = os.path.join(directory, "cxem_*.out")
+    R_value_fortran = None
+
+    for filename in sorted(glob.glob(pattern)):
+        E = None
+        with open(filename, "r") as f:
+            for line in f:
+                if "Free state:" in line:
+                    match = re.search(r"E=\s*([+-]?\d+\.\d+E[+-]\d+)", line)
+
+                    if match:
+                        E = float(match.group(1))
+
+                parts = line.split()
+
+                # Skip header/non-data lines
+                if len(parts) != 3:
+                    continue
+
+                try:
+                    R = float(parts[0])
+                    P = float(parts[1])
+
+                    # First nonzero R
+                    if R != 0.0:
+                        if R_value_fortran is None:
+                            R_value_fortran = R
+                        P_values.append(P)
+                        E_values.append(E)
+                        break
+
+                except ValueError:
+                    continue
+    if R_value_fortran is None:
+        raise RuntimeError("No matching radius extracted")
+
+    P_values = np.array(P_values)
+    E_values = np.array(E_values) * E_HARTREE/1e6
+
+    print(f"R = {R_value_fortran}")
+    print(f"R in a.u = {R_value_fortran/ AU}")
+    print(f"E values = {E_values}")
+    print(f"P(R) values = {P_values}")
+
+
+
+    p = np.sqrt(E_values * (E_values + 2*C**2))/C
+    total_E = E_values + ME
+    g_func = np.sqrt((total_E + ME)/(2*total_E)) * P_values /(p * R_value_fortran/AU)
+
+    plt.figure(figsize=(12,8))
+    plt.plot(E_values, g_func)
+    plt.xscale("log")
+    plt.show()
+
+    return g_func, E_values
 
 
 
@@ -54,11 +120,8 @@ def find_mesh_point_R_au(mesh_points, rN):
     return idx_R, mesh_point_R_au
 
 
-
-def Fermi_numerical(Ee, Z, A, data):
-    s = np.sqrt(1-(Z/A)**2)
+def calc_g_and_f(Ee, Z, A, data):
     Ee = np.asarray(Ee, dtype = float)
-    T = Ee - ME
 
     T_mesh = data["T"]
     P_n = data["P_n"]
@@ -75,32 +138,34 @@ def Fermi_numerical(Ee, Z, A, data):
     g_n1 = np.sqrt((Ee + ME)/(2*Ee)) * P_n[:,idx_R] /(p_au * mesh_point_R_au)
     f_p1 = np.sqrt((Ee + ME)/(2*Ee)) * Q_p[:,idx_R] / (p_au * mesh_point_R_au)
 
-    Fermi_vals = (g_n1**2 + f_p1**2)
+    return g_n1, f_p1
 
+
+
+def Fermi_numerical(Ee, Z, A, data):
+    s = np.sqrt(1-(Z/A)**2)
+
+    T = Ee - ME
+    T_mesh = data["T"]
+    T_MeV = T_mesh * E_HARTREE/1e6
+
+    g, f = calc_g_and_f(Ee, Z, A, data)
+
+
+    Fermi_vals = (g**2 + f**2)
 
     return 2/(s+1) * np.interp(T, T_MeV, Fermi_vals)
 
 def E_function(Ee, Z, A, data):
     s = np.sqrt(1-(Z/A)**2)
-    Ee = np.asarray(Ee, dtype = float)
+
     T = Ee - ME
-
     T_mesh = data["T"]
-    P_n = data["P_n"]
-    Q_p = data["Q_p"]
-    idx_R = data["idx_R"]
-    mesh_point_R_au = data["mesh_point_R_au"]
-
-
     T_MeV = T_mesh * E_HARTREE/1e6
-    Ee = T_MeV + ME
-    p_au = np.sqrt(T_mesh * (T_mesh + 2*C**2))/C
 
+    g, f = calc_g_and_f(Ee, Z, A, data)
+    E_vals = 2*g * f
 
-    g_n1 = np.sqrt((Ee + ME)/(2*Ee)) * P_n[:,idx_R] /(p_au * mesh_point_R_au)
-    f_p1 = np.sqrt((Ee + ME)/(2*Ee)) * Q_p[:,idx_R] / (p_au * mesh_point_R_au)
-
-    E_vals = 2*g_n1 * f_p1
 
     return np.interp(T, T_MeV, E_vals)
 
@@ -117,7 +182,115 @@ def Fermi(Ee, Z, A, rN):
     F = (sp.gamma(3) / (sp.gamma(1) * sp.gamma(1 + 2 * gamma0)))**2
     F *= (2 * p * rN)**(2 * (gamma0 - 1)) * np.exp(np.pi * y)
     F *= np.abs(sp.gamma(gamma0 + 1j * y))**2
-    return F
+
+    firstorder_corr = 6 * p * rN * np.sqrt((1-gamma0)/(1+gamma0)) * (1+gamma0 - 2*gamma0* (p/Ee)**2/3)/((1+ 2*gamma0)*p/Ee)
+
+    secondorder_corr = -(p * rN)**2 * (1-gamma0)/(1+gamma0) * (-2*(1+gamma0)* (5 + 4*gamma0) + (1 + 6*gamma0 + 4*gamma0**2)*(p/Ee)**2)/((1 + 2*gamma0) * p/Ee)**2
+
+    return F * (1 -firstorder_corr - secondorder_corr)
+
+
+
+#TODO write a func to compare f and g individually
+
+def plot_f_and_g(Ee, potential_index, cnf, data, output_directory_name):
+    Z = cnf["Z"] # Atomic number
+    A = cnf["A"] # Atomic Mass number
+    Q = cnf["Q"] # MeV Q-value
+    rN = 1.2 * A ** (1 / 3) / HBAR_C # Nuclear radius
+
+    scheme = None
+    f_analytic = g_analytic = None
+
+    g_numeric, f_numeric = calc_g_and_f(Ee, Z, A, data)
+
+    g_fortran, E_fortran = Fortran_data()
+
+    if potential_index == 0:
+        scheme = "B"
+
+        out_g = np.empty_like(Ee, dtype = float)
+        out_f = np.empty_like(Ee, dtype = float)
+
+        kappa_g = -1
+        kappa_f = 1
+
+
+        for i , E in enumerate(Ee):
+            p = np.sqrt(E**2 - ME**2)
+            eta = ALPHA * Z* E/ p
+            gammak = np.sqrt(1 - (ALPHA * Z)**2)
+
+            numerator = np.abs(sp.gamma(1 + gammak + 1j * eta))
+            denominator = sp.gamma(1 + 2 * gammak)
+            gamma_ratio = numerator/denominator
+
+            sqrt_term_plus = np.sqrt((E + ME) / (2 * E))
+            sqrt_term_min = np.sqrt((E - ME) / (2 * E))
+
+            exp_zeta_g = np.sqrt((kappa_g - 1j * eta * ME/E) / (gammak - 1j * eta))
+            exp_zeta_f = np.sqrt((kappa_f - 1j * eta * ME/E) / (gammak - 1j * eta))
+
+
+            hyp = mp.hyp1f1(gammak - 1j*eta, 1 + 2*gammak, -2*1j*p*rN)
+            Im_term = np.imag(np.exp(1j*p*rN) * exp_zeta_g * hyp )
+            Re_term = np.real(np.exp(1j*p*rN) * exp_zeta_f * hyp)
+
+            out_g[i] = np.sign(kappa_g) * 1.0/(p*rN) * sqrt_term_plus * gamma_ratio * (2*p*rN)**gammak * np.exp(np.pi * eta/2) * Im_term
+            out_f[i] = np.sign(kappa_f) * 1.0/(p*rN) * sqrt_term_min * gamma_ratio * (2*p*rN)**gammak * np.exp(np.pi * eta/2) * Re_term
+
+        g_analytic = out_g
+        f_analytic = out_f
+    elif potential_index == 2:
+        scheme = "A"
+        g_analytic = np.sqrt(Fermi(Ee, Z, A, rN)) * np.sqrt((Ee + ME)/(2*Ee))
+        f_analytic = np.sqrt(Fermi(Ee, Z, A, rN)) * np.sqrt((Ee - ME)/ (2*Ee))
+
+    elif potential_index == 3:
+        scheme = "C"
+
+
+
+    else:
+        raise RuntimeError("No proper potential index has been passed")
+
+
+
+
+
+    plt.figure(figsize=(12,8))
+    plt.plot(Ee-ME, abs(f_numeric), label = "f numeric")
+    if f_analytic is not None:
+        plt.plot(Ee-ME, f_analytic, label = "f analytic")
+    plt.xlabel(r"$T$ (Mev)")
+    plt.ylabel(r"$f_{\kappa=1}(R)$")
+    plt.xlim((Ee-ME)[0], (Ee-ME)[-1])
+    plt.xscale("log")
+    plt.ylim(0, 4)
+    plt.title(f"f wave func comparison, Scheme {scheme} ")
+    plt.legend()
+    plt.savefig(os.path.join(output_directory_name, f"f_comparison_scheme_{scheme}.png"), dpi = 300)
+    plt.show()
+
+
+    plt.figure(figsize=(12,8))
+    plt.plot(E_fortran, abs(g_fortran), label = "g Fortrant")
+    plt.plot(Ee-ME, abs(g_numeric), label = "g numeric")
+    if g_analytic is not None:
+        plt.plot(Ee-ME, g_analytic, label = "g analytic")
+    plt.xlabel(r"$T$ (Mev)")
+    plt.ylabel(r"$g_{\kappa=-1}(R)$")
+    plt.xlim((Ee-ME)[0], (Ee-ME)[-1])
+    plt.xscale("log")
+    plt.ylim(0, 20)
+    plt.title(f"g wave func comparison, Scheme {scheme} ")
+    plt.legend()
+    plt.savefig(os.path.join(output_directory_name, f"g_comparison_scheme_{scheme}.png"), dpi = 300)
+    plt.show()
+
+    return None
+
+
 
 
 def electron_momentum(E):
@@ -157,7 +330,7 @@ def two_electron_integrand(Ee1, Ee2, Q_value, tag, fermi_func):
     F2 = fermi_func(Ee2)
 
     neutrino_energy_sum = Q_value + 2*ME - Ee1 - Ee2
-    energy_assymetry = Ee1 - Ee2 #### ??????
+    energy_assymetry = Ee1 - Ee2
 
     polynomail = phase_space_polynomial(tag, neutrino_energy_sum, energy_assymetry)
 
@@ -250,9 +423,15 @@ def Calc_double_beta_decay_spectrum(config,cnf):
     T_p, r_p, P_p, Q_p = load_data(directory_name, file_name_kappa_p)
 
 
+
     idx_R, mesh_point_R_au = find_mesh_point_R_au(r_n, rN)
 
     data = {"T":T_n, "P_n":P_n, "Q_p":Q_p, "idx_R":idx_R, "mesh_point_R_au":mesh_point_R_au}
+
+    T_MeV = T_n * E_HARTREE/1e6
+    Ee = T_MeV + ME
+
+    plot_f_and_g(Ee, potential_index,cnf, data, plots_output_directory)
 
     # Optional quick visualization of Fermi function
     x_plot = np.linspace(ME+1e-3, Q + ME, 2000)
@@ -261,7 +440,7 @@ def Calc_double_beta_decay_spectrum(config,cnf):
 
 
     fig, (ax1, ax2) = plt.subplots(2,1, figsize=(12,8), sharex = True, gridspec_kw={"height_ratios": [3,1]})
-    ax1.plot(x_plot, Analytic_fermi_plot, label='Fermi Analytical')
+    ax1.plot(x_plot, Analytic_fermi_plot, label='Pure Coulomb Fermi Analytical')
     ax1.plot(x_plot, Numeric_fermi_plot , label='Fermi Numerical')
 
     ax1.set_xlabel('Electron Energy (MeV)')
@@ -277,8 +456,8 @@ def Calc_double_beta_decay_spectrum(config,cnf):
     ax2.grid(True)
 
     plt.tight_layout()
-    fig.savefig(os.path.join(plots_output_directory, f"Fermi_Function_potential_{potential_index}_Z{Z}_A{A}.png"), dpi = 300)
-    # plt.show()
+    fig.savefig(os.path.join(plots_output_directory, f"Fermi_Function_potential_{potential_index}_Z{Z}_A{A}_test.png"), dpi = 300)
+    plt.show()
 
 
 
@@ -336,7 +515,7 @@ def Calc_double_beta_decay_spectrum(config,cnf):
     spectrum_vals_num = np.array([spectrum_epsilon(eps, Q, Fermi_numeric) for eps in eps_grid])
 
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12,8), sharex = True, gridspec_kw = {"height_ratios": [3,1]})
-    ax1.plot(eps_grid, spectrum_vals, lw=1.5, label = "analytical")
+    ax1.plot(eps_grid, spectrum_vals, lw=1.5, label = "pure Coulomb analytical")
     ax1.plot(eps_grid, spectrum_vals_num, lw = 1.5 ,label = "numerical")
     ax1.set_xlabel('epsilon = Ee1 + Ee2 − 2 me (MeV)')
     ax1.set_ylabel('dΓ/dε (1/yr per MeV)')
@@ -351,8 +530,8 @@ def Calc_double_beta_decay_spectrum(config,cnf):
     ax2.grid(True)
 
     plt.tight_layout()
-    fig.savefig(os.path.join(plots_output_directory, f"Spectrum_potential_{potential_index}_Z{Z}_A{A}.png"), dpi = 300)
-    # plt.show()
+    fig.savefig(os.path.join(plots_output_directory, f"Spectrum_potential_{potential_index}_Z{Z}_A{A}_test.png"), dpi = 300)
+    plt.show()
 
     total_rate, total_err = quad(lambda eps: spectrum_epsilon(eps, Q, Fermi_analytic), 0.0, Q,
                                 epsabs=1e-18, epsrel=1e-16, limit=20000, points=[0.0, Q/2.0, Q])
@@ -370,7 +549,7 @@ def Calc_double_beta_decay_spectrum(config,cnf):
     plt.legend()
     plt.title("Normalized 2νββ Spectrum")
     plt.grid(True)
-    # plt.show()
+    plt.show()
 
     norm_check = np.trapezoid(spec_vals_norm, eps_grid)
     norm_check_num = np.trapezoid(spec_val_norm_num, eps_grid)
@@ -387,7 +566,7 @@ def Calc_double_beta_decay_spectrum(config,cnf):
 
         f.write(f"### Double Beta Decay Results for {config["isotope"]} using Scheme {scheme} ###\n\n")
 
-        f.write(f"G analytic converted to 1/yr units [G0, G2, G4, G22]:  {G_results} \n")
+        f.write(f"G analytic converted to 1/yr units [G0, G2, G4, G22]:  {G_results} \n") #### Get rid of this, as it only shows Pure coulomb fermi G values
         f.write(f"G numerical converted to 1/yr units [G0, G2, G4, G22]: {G_results_num} \n")
         f.write(f"H numerical ----------------------->[H0, H2, H4, H22]: {H_result_num}\n\n")
 

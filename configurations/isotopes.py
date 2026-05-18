@@ -5,7 +5,7 @@ ISOTOPES = {
     "Z": 56, #Z after double beta decay so Z = 54 + 2
     "A": 136,
 
-    "QRPA_Simko_2018": 2.45783,
+    "Q": 2.45783,
     "kotilla" : 2.45783,
     },
 
@@ -13,7 +13,7 @@ ISOTOPES = {
     "Z": 44,
     "A": 100,
 
-    "QRPA_Simko_2018": 3.0344,
+    "Q": 3.0344,
     "kotilla": 3.0344,
     },
 
@@ -21,7 +21,7 @@ ISOTOPES = {
     "Z": 62,
     "A": 150,
 
-    "QRPA_Simko_2018": 3.37138 ,
+    "Q" : 3.37138 ,
     "kotilla": 3.37138
     },
 }

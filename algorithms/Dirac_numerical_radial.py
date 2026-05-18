@@ -13,7 +13,7 @@ from tqdm import tqdm
 import time
 import math
 from pathlib import Path
-from physics_constants import ALPHA, C, EPSILON, AU, E_HARTREE, R0
+from configurations.physics_constants import ALPHA, C, EPSILON, AU, E_HARTREE, R0
 from Thomas_Fermi import make_phi_r
 
 
@@ -90,7 +90,7 @@ def potential(r, Z, R_au, potential_index, phi_r):
 
 #####################################################################################################################
 ### Find_X and Mesh_Grid solve a system of equations given in section 8.4 of RADIAL to create a continues mesh which
-### is very fine in the beginning and becomes coarser as it moves further out
+### is very fine in the beginning and becomes coarser and linear as it moves further out
 #####################################################################################################################
 def Find_X(A_grid, x_min = 1e-10):
 
@@ -111,7 +111,6 @@ def Find_X(A_grid, x_min = 1e-10):
 
 
 def mesh_grid(r_END, A_grid, N, r2, DRN, nuc_radius):
-
 
     if not (0.5 < A_grid < 1.0):
         raise ValueError(f"A_grid = {A_grid: .6g}, not in required range (0.5,1). Adjust r2 DRN or 'resolution'" )
@@ -244,7 +243,7 @@ def Singular_Power_Series_Terms_Dirac(u_array, r_b, l ,Z , kappa, sigma):
     u2 = u_array[2]
     u3 = u_array[3]
 
-    s = t = 0
+
     S_a = S_b = 0
 
     a = []
@@ -457,6 +456,8 @@ def Singular_Power_Series_Terms_Dirac(u_array, r_b, l ,Z , kappa, sigma):
 
             if n > 499:
                 raise RuntimeError(f"No convergenvce before n = {n}")
+    else:
+        raise RuntimeError("None of the singular u_0, sigma conditions were met")
 
     arr_a = np.array(a)
     arr_b = np.array(b)
@@ -516,6 +517,7 @@ def Power_Series_Terms_Dirac(u_array, initial_condition_a, initial_condition_b ,
             S_bn, Sbn_c = Neaumaier_add(S_bn, Sbn_c, i * bx)
 
     n=3
+    tol_multiplier = 1.1
     while True:
         n +=1
         pf = pre_factor / n
@@ -554,13 +556,18 @@ def Power_Series_Terms_Dirac(u_array, initial_condition_a, initial_condition_b ,
             scale2 = abs(t4) + abs(t5) + abs(t6)
 
 
-            #TODO CHECK WETHER THIS SCALING TOLERANCE IS STILL NEEDED?
-            tol_res = EPSILON * max(scale1, scale2, 1.0)
-            if max(condition1 , condition2) < tol_res:
+            # tol_res = EPSILON * max(scale1, scale2, 1.0)
+            tol_res = EPSILON * max(abs(S_a_val), abs(S_b_val))
+            if n > 20:
+                tol_res *= tol_multiplier
+                tol_multiplier += 0.05
+            if max(abs(condition1) , abs(condition2)) < tol_res:
+                if tol_multiplier > 1.1:
+                    print(f"For recurance series to converge in range [{r_a}, {r_b}],the tolerance is scaled by x{tol_multiplier:.2f}")
                 break
 
         if n > 499:
-            raise RuntimeError(f"No convergence before n = {n}")
+            raise RuntimeError(f"No convergence before n = {n}, {max(abs(condition1) , abs(condition2))} < {tol_res} not met")
 
     arr_a = np.array([float(x) for x in a], dtype = float)
     arr_b = np.array([float(x) for x in b], dtype = float)
@@ -733,7 +740,7 @@ def Normalization_Constant(r_mesh, idx_rc, P_mesh, Q_mesh, Analytic_normalizatio
     x = k * r_c
 
 
-    if abs(Z) < 1:
+    if abs(Z) == 0:
         l = (-kappa -1) if (kappa < 0) else kappa
         mult_fact = np.sqrt(T/(T + 2*C**2))
 
@@ -821,7 +828,7 @@ def Normalization_Constant(r_mesh, idx_rc, P_mesh, Q_mesh, Analytic_normalizatio
 def Analytic(Z,eta, k, W, kappa, Lambda, Analytic_normalization_const, T, delta, N_points, rc):
 
     r = np.linspace(max(0,rc-1.5),rc+1.5,N_points)
-    if abs(Z) < 1:
+    if abs(Z) == 1:
         x = k * r
         mult_fact = np.sqrt(T / (T+2*C**2))
         if kappa < 0:
@@ -961,14 +968,14 @@ def Visualize(config,cnf):
         Lambda_match = Lambda
         Analytic_normalization_const_match = Analytic_normalization_const
 
-
-    r_analytic, P_analytic, Q_analytic = Analytic(Z_match,eta_match, k ,W, kappa, Lambda_match, Analytic_normalization_const_match, T, delta, 100000, mesh_points[rc_idx])
+    #
+    # r_analytic, P_analytic, Q_analytic = Analytic(Z_match,eta_match, k ,W, kappa, Lambda_match, Analytic_normalization_const_match, T, delta, 100000, mesh_points[rc_idx])
 
     plt.figure(figsize=(12,8))
     plt.plot(mesh_points, wave_function_upper*N , label = "P(r) - Normalized")
     plt.plot(mesh_points, wave_function_lower*N , label = "Q(r) - Normalized")
-    plt.plot(r_analytic, P_analytic, ls = "--" , label = "Analytical mpmath sol P(r)")
-    plt.plot(r_analytic, Q_analytic, ls = "--" , label = "Analytical mpmath sol Q(r)")
+    # plt.plot(r_analytic, P_analytic, ls = "--" , label = "Analytical mpmath sol P(r)")
+    # plt.plot(r_analytic, Q_analytic, ls = "--" , label = "Analytical mpmath sol Q(r)")
     plt.axvline(x = R_au, color = "gray" , ls = "--", label = f"r = {R_au}")
     plt.axvline(x = r_c, color = "black", ls = "--", label = f"rc = {r_c}")
 
@@ -1062,7 +1069,7 @@ def Generate_Fermi_Data(config,cnf):
 
             print(f"Finding wave function for T = {T}, iter = {i}, eta = {eta}")
             rc_idx = Find_rc(mesh_points, k, Z, R_au, potential_index, phi_r)
-            series_terms_upper, series_terms_lower = Calc_Series_Terms(mesh_points,angular_momentum_quantum_number, T, Z , kappa, sigma ,R_au, derivatives, potential_index, phi_r) #### Currently can only remove l and Z but replace it with cnf. that is 2 for 1? IS that worth it?
+            series_terms_upper, series_terms_lower = Calc_Series_Terms(mesh_points,angular_momentum_quantum_number, T, Z , kappa, sigma ,R_au, derivatives, potential_index, phi_r)
             wave_function_upper, wave_function_lower = Solve_Power_Series(series_terms_upper, series_terms_lower, mesh_points)
             N, delta, r_c = Normalization_Constant(mesh_points, rc_idx ,wave_function_upper,wave_function_lower, Analytic_normalization_const, T, k, eta, W, kappa, Z, Lambda, sigma, R_au, potential_index, phi_r)
 
@@ -1077,7 +1084,10 @@ def Generate_Fermi_Data(config,cnf):
 
         filename = f"{config["isotope"]}_potential_{potential_index}_kappa_{kappa:+d}_Z{Zf}_A{A}.npz"
 
-        main_output_directory = Path("Dirac_"+config["isotope"])
+        if config["paths"]["output_directory"] is None:
+            main_output_directory = Path("Dirac_"+config["isotope"])
+        else:
+            main_output_directory = Path(config["paths"]["output_directory"])
 
         NPZ_output_directory = main_output_directory / "NPZ_files"
         NPZ_output_directory.mkdir(parents=True, exist_ok=True)
