@@ -4,6 +4,7 @@
 *-swp
 # Ignore directories
 out*
+out_fortran/
 plots/
 phase_space_results/
 test* 
