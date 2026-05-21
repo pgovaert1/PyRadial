@@ -6,7 +6,7 @@ EPSILON = 1e-15
 
 AU = 5.29177210903e-11 #Bohr radius
 E_HARTREE = 27.211386 #eV
-R0 = 1e-15 # avoid division by 0  ### This is the same as epsilon, but defining seperatly to avoid naming confusion later on
+R0 = 1e-15 # avoid division by 0
 
 ME = 0.51099895069 # Electron rest mass in MeV/c^2
 GF = 1.1663787e-11 # Fermi coupling constant in MeV^-2

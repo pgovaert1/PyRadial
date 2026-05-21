@@ -14,32 +14,13 @@ import time
 import math
 from pathlib import Path
 from configurations.physics_constants import ALPHA, C, EPSILON, AU, E_HARTREE, R0
-from Thomas_Fermi import make_phi_r
+from algorithms.thomas_fermi import make_phi_r
+from algorithms.grid_creation import find_x, radial_grid, obtain_mesh_range, find_rc
 
 
 
 
 mp.mp.dps = 30
-
-
-########################################################
-##### Function to save generated data to a file
-########################################################
-
-def save_run_npz(filename, label, r, P):
-
-    if os.path.exists(filename):
-        old = np.load(filename)
-        data = dict(old)
-    else:
-        data = {}
-
-
-    data[f"{label}_r"] = r
-    data[f"{label}_P"] = P
-
-    np.savez_compressed(filename, **data)
-
 
 
 
@@ -48,6 +29,29 @@ def save_run_npz(filename, label, r, P):
 ###################################
 
 def potential(r, Z, R_au, potential_index, phi_r):
+    """
+    Generates the selected atomic potential function.
+
+    Parameters
+    ----------
+    r : float or ndarray
+        Radial coordinate(s) at which potential is evaluated.
+    Z : int
+        Atomic number.
+    R_au : float
+        Nuclear radius in Atomic units, defined by R = 1.2e-15 * A^(1/3) / AU.
+    potential_index: int
+        Index specifying which potential model to use.
+    phi_r : callable
+        Function phi(r) used in the Thomas-Fermi screening potential.
+
+    Returns
+    -------
+    float or ndarray
+        Evaluated potential value(s).
+    """
+
+
     Z_sing = Z  ###Define the singular potential term which blows up at r ->0
 
     if potential_index == 0:
@@ -85,82 +89,41 @@ def potential(r, Z, R_au, potential_index, phi_r):
         raise RuntimeError("No proper potential function idex number was selected")
 
 
-
-
-
-#####################################################################################################################
-### Find_X and Mesh_Grid solve a system of equations given in section 8.4 of RADIAL to create a continues mesh which
-### is very fine in the beginning and becomes coarser and linear as it moves further out
-#####################################################################################################################
-def Find_X(A_grid, x_min = 1e-10):
-
-    def f(x):
-        return (x+1.0) * (1.0 - x * np.log((x + 1.0) / x)) - A_grid
-
-    x_max = 1.0/(1.0 - A_grid)
-
-    for i in range(60):
-        xm = 0.5*(x_min + x_max)
-        if f(xm) == 0: return xm
-        if f(x_min) * f(xm) < 0:
-            x_max = xm
-        else:
-            x_min = xm
-
-    return 0.5* (x_min + x_max)
-
-
-def mesh_grid(r_END, A_grid, N, r2, DRN, nuc_radius):
-
-    if not (0.5 < A_grid < 1.0):
-        raise ValueError(f"A_grid = {A_grid: .6g}, not in required range (0.5,1). Adjust r2 DRN or 'resolution'" )
-
-    x = Find_X(A_grid)
-
-    c = x * r_END
-    b = (x * (c + r_END) * (DRN - r2))/ (DRN * r2)
-    a = (c - b * r2) / (c * r2)
-    d = 1 - b * np.log(c)
-
-    def G(r):
-        return a * r + b * np.log(c + r) + d
-
-    r = np.zeros(N)
-    r[0] = 0.0
-    r[-1] = r_END
-
-    for i in tqdm(range(1,N-1) , desc = "Constructing mesh grid"):
-        target = i + 1
-        low = r[i-1]
-        high = r_END
-
-        for k in range(60):
-            mid = 0.5*(low + high)
-            if G(low) > target: raise RuntimeError("Left bracketing failed")
-            if G(high) < target: raise RuntimeError("Right bracketing failed")
-
-            if G(mid) < target :
-                low = mid
-            else:
-                high = mid
-
-        r[i] = 0.5*(low+high)
-
-
-    for i in range(len(r)-1):
-        if r[i] < nuc_radius and r[i+1] > nuc_radius:
-            r = np.insert(r,i+1,nuc_radius)
-            break
-        elif r[i+1] > nuc_radius:
-            break
-
-    return r
-
 #############################################################################################################
 ### Calculate the potential parameters u0,u1,u2,u3 in accordance to RADIAL for the initial mesh step [0,rb]
 #############################################################################################################
 
-def Singular_Potential_Parameters_Dirac(r_b, T, Z, R_au, potential_index, phi_r):
+def singular_potential_parameters(r_b, T, Z, R_au, potential_index, phi_r):
+    """
+    Generate cubic splined potential parameters (u0,u1,u2,u3) on singular range [0,r_b]
+
+    Parameters
+    ----------
+    r_b : float
+        Final radial coordinate in given segment [0,r_b].
+    T : float
+        Kinetic energy in Hartree units.
+    Z : int
+        Atomic number.
+    R_au : float
+        Nuclear radius in Atomic units, defined by R = 1.2e-15 * A^(1/3) /AU.
+    potential_index: int
+        Index specifying which potential model to use.
+    phi_r : callable
+        Function phi(r) used in the Thomas-Fermi screening potential.
+
+    Returns
+    -------
+    u0 : float
+        First polynomial coefficient of cubic spline.
+    u1 : float
+        Second polynomial coefficient of cubic spline.
+    u2 : float
+        Thrid polynomial coefficient of cubic spline.
+    u3 : float
+        Fourth polynomial coefficient of cubic spline.
+
+    """
     h = r_b
     Z_sing = Z
 
@@ -177,22 +140,46 @@ def Singular_Potential_Parameters_Dirac(r_b, T, Z, R_au, potential_index, phi_r)
     dr = 1e-8
     v1 = (V_reg(R0+dr) - V_reg(R0-dr)) / (2*dr)
     v2 = (V_reg(R0+dr) - 2*V_reg(R0) + V_reg(R0-dr)) / (dr**2)
-    # v3 = (V_reg(r0 + 2*dr) - 3*V_reg(r0 + dr) + 3*V_reg(r0) - V_reg(r0 -dr))/ (dr**3)
 
-    # u0 = 0 #alpha * Z_sing
     u1 = ALPHA * h *(v0-T)
     u2 = ALPHA * h**2 * (v1)
     u3 = ALPHA * h**3 * (0.5*v2)
 
     return u0, u1, u2, u3
 
-
-
 #####################################################################################################################
 ### Calculate the potential parameters u0,u1,u2,u3 in accordance to RADIAL for the any mesh step [ra,rb] for ra != 0
 #####################################################################################################################
 
-def General_Potential_Parameters_Dirac(r_a ,r_b, l, T, derivatives):
+def general_potential_parameters(r_a ,r_b, l, T, derivatives):
+    """
+    Generate cubic splined potential parameters (u0,u1,u2,u3) on range [r_a,r_b]
+
+    Parameters
+    ----------
+    r_a : float
+        Lower radial boundary of the interval [r_a, r_b].
+    r_b : float
+        Upper radial boundary of the interval [0,r_b].
+    l : int
+        Orbital angular momentum quantum number.
+    T : float
+        Kinetic energy in Hartree units.
+    derivatives : list
+        List made of zero, first, second and thrid order derivatives of the cubic splined potential
+
+    Returns
+    -------
+    u0 : float
+        First polynomial coefficient of cubic spline.
+    u1 : float
+        Second polynomial coefficient of cubic spline.
+    u2 : float
+        Thrid polynomial coefficient of cubic spline.
+    u3 : float
+        Fourth polynomial coefficient of cubic spline.
+
+    """
     ra = max(r_a, R0)
     rb = r_b
 
@@ -222,6 +209,29 @@ def General_Potential_Parameters_Dirac(r_a ,r_b, l, T, derivatives):
 ####################################################################################################################
 
 def Neaumaier_add(sum_, c, x):
+    """
+    Perform one step of Neumaier compensated summation.
+
+    This algorithm reduces floating-point truncation errors that
+    accumulate during repeated additions by tracking a compensation
+    term for lost low-order bits.
+
+    Parameters
+    ----------
+    sum_ : float
+        Current accumulated sum.
+    c : float
+        Compensation term storing accumulated rounding errors.
+    x : float
+        New value to add to the sum.
+
+    Returns
+    -------
+    sum_ : float
+        Updated accumulated sum.
+    c : float
+        Updated compensation term.
+    """
     t = sum_ + x
     if abs(sum_) >= abs(x):
         c += (sum_ -t) + x
@@ -230,6 +240,21 @@ def Neaumaier_add(sum_, c, x):
     return t , c
 
 def Neaumaier_value(sum_, c):
+    """
+    Compute the corrected sum from Neumaier compensated summation.
+
+    Parameters
+    ----------
+    sum_ : float
+        Accumulated floating-point sum.
+    c : float
+        Compensation term containing accumulated rounding corrections.
+
+    Returns
+    -------
+    float
+        Corrected sum including compensation.
+    """
     return sum_ + c
 
 
@@ -237,7 +262,37 @@ def Neaumaier_value(sum_, c):
 ### Finding the power series terms for the initial mesh step [0,rb] in accordance with RADIAL
 ##############################################################################################
 
-def Singular_Power_Series_Terms_Dirac(u_array, r_b, l ,Z , kappa, sigma):
+def singular_power_series_terms(u_array, r_b, l ,Z , kappa, sigma):
+    """
+    Computes the power series coefficients An, Bn on singular radial interval [0,r_b]
+
+    Parameters
+    ----------
+    u_array : ndarray
+        Cubic spline coefficients of the potential (u0,u1,u2,u3).
+    r_b : float
+        Upper radial coordinate of the interval [0,r_b].
+    l : int
+        Orbital angular momentum quantum number.
+    Z : int
+        Atomic number.
+    kappa : int
+        Relativistic angular momentum quantum number (See eq 2.19b 'RADIAL: a Fortran subroutine by Francesc Salvat').
+    sigma : int
+        Value of -sign(kappa).
+
+    Returns
+    -------
+    arr_a : ndarray
+        Array of power series coefficients An.
+    arr_b : ndarray
+        Array of power series coefficients Bn.
+    normalized_end_point_P : float
+        Normalized value of P(r_b) = P(1)/|P(1)|.
+    normalized_end_point_Q : float
+        Normalized valued of Q(r_b) = Q(1)/|P(1)|.
+
+    """
     u0 = u_array[0]
     u1 = u_array[1]
     u2 = u_array[2]
@@ -462,10 +517,11 @@ def Singular_Power_Series_Terms_Dirac(u_array, r_b, l ,Z , kappa, sigma):
     arr_a = np.array(a)
     arr_b = np.array(b)
 
-    normalized_end_point_a = S_a/abs(S_a)
-    normalized_end_point_b = S_b/abs(S_a)
+    normalized_end_point_P = S_a/abs(S_a)
+    normalized_end_point_Q = S_b/abs(S_a)
 
-    return arr_a, arr_b, normalized_end_point_a, normalized_end_point_b, s, t
+    return arr_a, arr_b, normalized_end_point_P, normalized_end_point_Q
+
 
 
 
@@ -473,7 +529,41 @@ def Singular_Power_Series_Terms_Dirac(u_array, r_b, l ,Z , kappa, sigma):
 ### Finding the power series terms for the any mesh step [ra,rb] for ra !=0 in accordance with RADIAL
 ######################################################################################################
 
-def Power_Series_Terms_Dirac(u_array, initial_condition_a, initial_condition_b , r_a, r_b, l, kappa, sigma):
+def general_power_series_terms(u_array, initial_condition_a, initial_condition_b , r_a, r_b, l, kappa, sigma):
+    """
+    Computes the power series coefficients An, Bn on regualr radial interval [r_a,r_b]
+
+    Parameters
+    ----------
+    u_array : ndarray
+        Cubic spline coefficients of the potential (u0,u1,u2,u3).
+    initial_condition_a : float
+        Initial condition to assign to A0.
+    initial_condition_b : float
+        # Initial condition to assign to B0.
+    r_a : float
+        Lower radial coordiante of the interval [r_a,r_b]
+    r_b : float
+        Upper radial coordinate of the interval [r_a,r_b].
+    l : int
+        Orbital angular momentum quantum number.
+    kappa : int
+        Relativistic angular momentum quantum number (See eq 2.19b Radial Fortran subroutine by Francesc Salvat).
+    sigma : int
+        Value of -sign(kappa).
+
+    Returns
+    -------
+    arr_a : ndarray
+        Array of power series coefficients An.
+    arr_b : ndarray
+        Array of power series coefficients Bn.
+    end_point_P : float
+        # Calculated P(r_b) value.
+    end_point_Q : float
+        Calculated Q(r_b) value.
+
+    """
     #Define the u terms
     u0, u1, u2, u3 = u_array
     u_sum = u0 + u1 + u2 + u3
@@ -572,10 +662,10 @@ def Power_Series_Terms_Dirac(u_array, initial_condition_a, initial_condition_b ,
     arr_a = np.array([float(x) for x in a], dtype = float)
     arr_b = np.array([float(x) for x in b], dtype = float)
 
-    end_point_a = Neaumaier_value(S_a, Sa_c)
-    end_point_b = Neaumaier_value(S_b, Sb_c)
+    end_point_P = Neaumaier_value(S_a, Sa_c)
+    end_point_Q = Neaumaier_value(S_b, Sb_c)
 
-    return arr_a, arr_b, end_point_a, end_point_b
+    return arr_a, arr_b, end_point_P, end_point_Q
 
 
 
@@ -585,11 +675,63 @@ def Power_Series_Terms_Dirac(u_array, initial_condition_a, initial_condition_b ,
 ###calculate and stich toghether all the terms needed to solve the power series
 #################################################################################################
 
-def Calc_Series_Terms(mesh_steps, l, T, Z, kappa, sigma, R_au, derivatives, potential_index, phi_r, ratio_max = 0.05, max_subdiv = 200):
+def calc_series_terms(grid_points, l, T, Z, kappa, sigma, R_au, derivatives, potential_index, phi_r, ratio_max = 0.05, max_subdiv = 200):
+    """
+    Compute power-series coefficients over the full radial grid
+
+    The singular interval near the origin [0,r_b], is first solved using 'singular_power_series_terms',
+    which generates the intiial recurrence coefficients A_n and B_n toghether with the corresponding
+    endpoint values of the radial wave function P(r) and Q(r) on the local interval [0,r_b]
+
+    For each subsequent grid interval [r_a,r_b], local recurrence coefficients are computes using
+    'general_power_series_terms'. The endpoints values P(r_b) and Q(r_b) from the previous interval
+    are used as the initial conditions for the next interval, ensuring continuity of the raidial solution
+    across the full grid
+
+    if the interval size ratio (h / r_a) exceeds 'ratio_max', the interval is subdived into smaller subintervals
+    before computing the local series expansion. The final output consists of all local coefficient sets A_n and
+    B_n stiched oer the complete radial range [0,r]
+
+    Parameters
+    ----------
+    grid_points : ndarray
+        1d grid steps over the total range [0,r]
+    l : int
+        Orbital angular momentum quantum number.
+    T : float
+        Kinetic energy in Hartree units.
+    Z : int
+        Atomic number.
+    kappa : int
+        Relativistic angular momentum quantum number (See eq 2.19b Radial Fortran subroutine by Francesc Salvat).
+    sigma : int
+        Value of -sign(kappa).
+    R_au : float
+        Nuclear radius in Atomic units, defined by R = 1.2e-15 * A^(1/3)/ AU.
+    derivatives : list
+        List made of zero, first, second and thrid order derivatives of the cubic splined potential.
+    potential_index: int
+        Index specifying which potential model to use.
+    phi_r : callable
+        Function phi(r) used in the Thomas-Fermi screening potential.
+    ratio_max : float
+        Maximum ratio to compare to h/r_a.
+    max_subdiv : int
+        Maximum amount of times a mesh [r_a,r_b] can be subdived into smaller meshes.
+
+    Returns
+    -------
+    Series_terms_list_a : list
+        List of all power series coefficients An over range (0,r)
+    Series_terms_list_b : list
+        List of all power series coefficients Bn over range (0,r)
+
+    """
+
     # cnf["Z"]
     #### l = cnf["angular_momentum_l"]
-    u_parameters0 = Singular_Potential_Parameters_Dirac(mesh_steps[1], T, Z, R_au, potential_index, phi_r)
-    Series_terms0a , Series_terms0b , initial_condition0a, initial_condition0b, s, t = Singular_Power_Series_Terms_Dirac(u_parameters0 ,mesh_steps[1] ,l ,Z ,kappa ,sigma)
+    u_parameters0 = singular_potential_parameters(grid_points[1], T, Z, R_au, potential_index, phi_r)
+    Series_terms0a , Series_terms0b , initial_condition0a, initial_condition0b = singular_power_series_terms(u_parameters0 ,grid_points[1] ,l ,Z ,kappa ,sigma)
 
     initial_temp_condition_a = initial_condition0a
     initial_temp_condition_b = initial_condition0b
@@ -597,9 +739,9 @@ def Calc_Series_Terms(mesh_steps, l, T, Z, kappa, sigma, R_au, derivatives, pote
     Series_terms_list_a = [Series_terms0a]
     Series_terms_list_b = [Series_terms0b]
 
-    for i in range(1, len(mesh_steps)-1):
-        r_a = mesh_steps[i]
-        r_b = mesh_steps[i+1]
+    for i in range(1, len(grid_points)-1):
+        r_a = grid_points[i]
+        r_b = grid_points[i+1]
 
         h = r_b - r_a
         ratio = h/ r_a
@@ -614,18 +756,18 @@ def Calc_Series_Terms(mesh_steps, l, T, Z, kappa, sigma, R_au, derivatives, pote
                 ra = float(sub_grid[j])
                 rb = float(sub_grid[j+1])
 
-                u_temp_parameter = General_Potential_Parameters_Dirac(ra, rb, l, T, derivatives)
+                u_temp_parameter = general_potential_parameters(ra, rb, l, T, derivatives)
 
-                Temp_series_terms_a,Temp_series_terms_b, initial_temp_condition_a, initial_temp_condition_b = Power_Series_Terms_Dirac(u_temp_parameter, initial_temp_condition_a, initial_temp_condition_b, ra , rb, l, kappa, sigma)
+                Temp_series_terms_a,Temp_series_terms_b, initial_temp_condition_a, initial_temp_condition_b = general_power_series_terms(u_temp_parameter, initial_temp_condition_a, initial_temp_condition_b, ra , rb, l, kappa, sigma)
 
                 if rb == r_b:
                     Series_terms_list_a.append(Temp_series_terms_a)
                     Series_terms_list_b.append(Temp_series_terms_b)
         else:
 
-            u_temp_parameter = General_Potential_Parameters_Dirac(r_a, r_b,l, T, derivatives)
+            u_temp_parameter = general_potential_parameters(r_a, r_b,l, T, derivatives)
 
-            Temp_series_terms_a, Temp_series_terms_b, initial_temp_condition_a, initial_temp_condition_b = Power_Series_Terms_Dirac(u_temp_parameter, initial_temp_condition_a, initial_temp_condition_b, r_a , r_b, l, kappa, sigma)
+            Temp_series_terms_a, Temp_series_terms_b, initial_temp_condition_a, initial_temp_condition_b = general_power_series_terms(u_temp_parameter, initial_temp_condition_a, initial_temp_condition_b, r_a , r_b, l, kappa, sigma)
 
             Series_terms_list_a.append(Temp_series_terms_a)
             Series_terms_list_b.append(Temp_series_terms_b)
@@ -637,106 +779,113 @@ def Calc_Series_Terms(mesh_steps, l, T, Z, kappa, sigma, R_au, derivatives, pote
 ### Solve_Power_Series takes as input the list of power series terms to solve the total power series, returning the ouput in an array
 ######################################################################################################################################
 
-def Solve_Power_Series(list_of_sequence_terms_a, list_of_sequence_terms_b, grid_points):
+def solve_power_series(list_of_sequence_terms_a, list_of_sequence_terms_b, grid_points):
+    """
+    Calculates the wavefunctions P and Q on the entire range [0,r] by calculating all the local
+    wavefunctions P and Q on each sub-interval [r_a,r_b] using the power series coefficients
+    An, Bn for P and Q respecivelty obtained through 'calc_series_terms' and stiching the resulting
+    wave functions toghether to obtain P(r) and Q(r) over the total range [0,r]
+
+    Parameters
+    ----------
+    list_of_sequence_terms_a : list
+        List of all power series sequence terms An
+    list_of_sequence_terms_b : list
+        List of all power series sequence terms Bn
+    grid_points : ndarray
+        1d grid steps over the total range [0,r]
+
+    Returns
+    -------
+    P_array : ndarray
+        Wavefunction values of P(r)
+    Q_array : ndarray
+        Wavefunction values of Q(r)
+    """
 
     r_mesh = np.asarray(grid_points, dtype = float)
     r_size = len(r_mesh)
 
-    P_mesh = np.zeros(r_size, dtype = float)
-    Q_mesh = np.zeros(r_size ,dtype = float)
+    P_array = np.zeros(r_size, dtype = float)
+    Q_array = np.zeros(r_size ,dtype = float)
 
-    P_mesh[0] = 0.0
-    Q_mesh[0] = 0.0
+    P_array[0] = 0.0
+    Q_array[0] = 0.0
 
     a0 = np.asarray(list_of_sequence_terms_a[0], dtype = float)
     b0 = np.asarray(list_of_sequence_terms_b[0], dtype = float)
 
     # at x=1 [P(1) = (1)^s sum A_n (1)^n] & [Q(1) = (1)^(s+t) sum B_n (1)^n]
-    P_mesh[1] = float(np.sum(a0))
-    Q_mesh[1] = float(np.sum(b0))
+    P_array[1] = float(np.sum(a0))
+    Q_array[1] = float(np.sum(b0))
 
     for i in range(1,r_size - 1):
         ai = np.asarray(list_of_sequence_terms_a[i], dtype = float)
         bi = np.asarray(list_of_sequence_terms_b[i], dtype = float)
 
-        P_mesh[i+1] = float(np.sum(ai))
-        Q_mesh[i+1] = float(np.sum(bi))
+        P_array[i+1] = float(np.sum(ai))
+        Q_array[i+1] = float(np.sum(bi))
 
-    return P_mesh, Q_mesh
-
-###################################################################################
-### Find mminimum range up to which to extend the mesh range used to solve P and Q
-###################################################################################
-
-def obtain_mesh_range(k, Z, R_au, potential_index, phi_r):
-    kr_min = 20.0
-    r_max = 0.01
-
-    RV = r_max* potential(r_max, Z, R_au, potential_index, phi_r)
-    r_infty = 1e5
-    Z_inf = r_infty * potential(r_infty, Z, R_au, potential_index, phi_r)
-
-
-    if potential_index == 3:
-        TAS = 10e-4 * abs(Z_inf)
-    else:
-        TAS = max(1e-11, EPSILON) * abs(Z_inf)
-
-    while abs(RV - Z_inf) >= TAS or (k * r_max <= kr_min):
-        r_max *= 2
-        RV = r_max* potential(r_max, Z, R_au, potential_index, phi_r)
-
-    print(f"mesh range set to {r_max}")
-
-    return r_max
-
-
-
-
-
-#################################################################################################################################################
-### Find_rc is a function finding the matching radius rc at which one can normalize the power series by matching it witht he asymptotic behavior
-#################################################################################################################################################
-
-def Find_rc(r_mesh, k, Z , R_au, potential_index, phi_r):
-    kr_min = 20.0
-    r_grid = np.asarray(r_mesh, dtype = float)
-
-
-    r_safe = np.maximum(r_grid, 1e-16)
-    RV = r_safe * potential(r_safe, Z, R_au, potential_index, phi_r)
-
-    r_infty = 10000
-    Z_inf = r_infty * potential(r_infty, Z, R_au, potential_index, phi_r)
-
-    if potential_index == 3:
-        TAS = 10e-4 * abs(Z_inf)
-    else:
-        TAS = max(1e-11, EPSILON) * abs(Z_inf)
-
-    idx_rc = None
-    for idx in range(len(r_grid)-1 ,2, -1):
-        if abs(RV[idx] - Z_inf) <= TAS and (k * r_grid[idx] >= kr_min):
-            idx_rc = idx
-        else:
-            break
-
-
-    if idx_rc is None:
-        raise RuntimeError("No rc found, extend distance")
-    print(f"rc succesfully found at rc = {r_grid[idx_rc]}")
-    return idx_rc
+    return P_array, Q_array
 
 ###########################################################################################
 ### Normalization_Constant function finds the normalization constant and phase shift delta
 ### of wave functions by matching them at rc with their assymptotic behavior
 ###########################################################################################
 
-def Normalization_Constant(r_mesh, idx_rc, P_mesh, Q_mesh, Analytic_normalization_const, T, k, eta, W, kappa, Z, Lambda, sigma, R_au, potential_index, phi_r):
-    P = P_mesh[idx_rc]
-    Q = Q_mesh[idx_rc]
+def Normalization_Constant(grid_points, idx_rc, P_array, Q_array, Analytic_normalization_const, T, k, eta, W, kappa, Z, Lambda, sigma, R_au, potential_index, phi_r):
+    """
+    Calculates the normalization constant to normalize the wavefunctions to unity as described in 'RADIAL: a Fortran subroutine by Francesc Salvat'
 
-    r_c = r_mesh[idx_rc]
+    Parameters
+    ----------
+    grid_points : ndarray
+        1d grid steps over the total range [0,r].
+    idx_rc : int
+        Index value at which grid_points ndarray value matches the free electron wave matching radius.
+    P_array : ndarray
+        Wavefunction values of P(r).
+    Q_array : ndarray
+        Wavefunction values of Q(r).
+    Analytic_normalization_const : float
+        Analytic normalization constant as calculated in eq 3.122 in 'RADIAL: a Fortran subroutine by Francesc Salvat'.
+    T : float
+        Kinetic energy in Hartree units.
+    k : float
+        Relativistic wave number.
+    eta : float
+        Relativistic Sommerfeld parameter.
+    W : float
+        Total relativistic energy (kinetic + rest energy).
+    kappa : int
+        Relativistic angular momentum quantum number (See eq 2.19b Radial Fortran subroutine by Francesc Salvat).
+    Z : int
+        Atomic number.
+    Lambda :
+        Lambda parameter defined as sqrt(kappa^2 - (alpha Z)^2).
+    sigma : int
+        Value of -sign(kappa).
+    R_au : float
+        Nuclear radius in Atomic units, defined by R = 1.2e-15 * A^(1/3) / AU.
+    potential_index: int
+        Index specifying which potential model to use.
+    phi_r : callable
+        Function phi(r) used in the Thomas-Fermi screening potential.
+
+    Returns
+    -------
+    A : float
+        Normalization constant to set P and Q to unit amplitude.
+    delta : float
+        Phase shift of the wave functions P and Q.
+    r_c : float
+        Matching radius point on grid_points.
+
+    """
+    P = P_array[idx_rc]
+    Q = Q_array[idx_rc]
+
+    r_c = grid_points[idx_rc]
     x = k * r_c
 
 
@@ -826,9 +975,49 @@ def Normalization_Constant(r_mesh, idx_rc, P_mesh, Q_mesh, Analytic_normalizatio
 #######################################################################################################################
 
 def Analytic(Z,eta, k, W, kappa, Lambda, Analytic_normalization_const, T, delta, N_points, rc):
+    """
+    Calculates the anlytical pure coulomb solutions of P and Q using mpmath CoulombF and
+    CoulombG functions around the matching radius. For the case (Z=0) uses scipy.special
+    spherical_jn function instead.
+
+    Parameters
+    ----------
+    Z : int
+        Atomic number.
+    eta : float
+        Relativistic Sommerfeld parameter
+    k : float
+        Relativistic wave number.
+    W : float
+        Total relativistic energy (kinetic + rest energy).
+    kappa : int
+        Relativistic angular momentum quantum number (See eq 2.19b Radial Fortran subroutine by Francesc Salvat).
+    Lambda :
+        Lambda parameter defined as sqrt(kappa^2 - (alpha Z)^2).
+    Analytic_normalization_const : float
+        Analytic normalization constant as calculated in eq 3.122 in 'RADIAL: a Fortran subroutine by Francesc Salvat'.
+    T : float
+        Kinetic energy in Hartree units.
+    delta : float
+        Phase shift of the wave functions P and Q.
+    N_points : int
+        Resolution of the r grid used to calculate P and Q
+    rc : float
+        Matching radius point on grid_points.
+
+    Returns
+    -------
+    r : ndarray
+        1d linear grid around the matching radius [max(rc-1.5), rc + 1.5)]
+    P: ndarray
+        Wavefunction values of P(r)
+    Q : ndarray
+        Wavefunction values of Q(r)
+
+    """
 
     r = np.linspace(max(0,rc-1.5),rc+1.5,N_points)
-    if abs(Z) == 1:
+    if abs(Z) == 0:
         x = k * r
         mult_fact = np.sqrt(T / (T+2*C**2))
         if kappa < 0:
@@ -920,7 +1109,7 @@ def Visualize(config,cnf):
     DRN = config["mesh_grid"]["upper_limit_step_size"]#Upper limit on distance between points near the end regime (make sure this stays small enough or wavefunc will not converge at larger distances r)
 
 
-    r_END = obtain_mesh_range(k, Z, R_au, potential_index, phi_r)
+    r_END = obtain_mesh_range(k, Z, R_au, potential_index, phi_r, potential)
 
     if r_N is None:
         r_N = 10000
@@ -932,8 +1121,8 @@ def Visualize(config,cnf):
         A_grid = ((r_END - (r_N - 1) *r2) / r_END) * (DRN / (DRN -r2))
 
     print(f"resolution set to {r_N} mesh points")
-    mesh_points = mesh_grid(r_END, A_grid, r_N, r2, DRN, R_au)
-    rc_idx = Find_rc(mesh_points, k, Z, R_au, potential_index, phi_r)
+    mesh_points = radial_grid(r_END, A_grid, r_N, r2, DRN, R_au)
+    rc_idx = find_rc(mesh_points, k, Z, R_au, potential_index, phi_r, potential)
 
     ###Setting up cubic spline
     N_V = 50000
@@ -951,8 +1140,8 @@ def Visualize(config,cnf):
 
 
 
-    series_terms_upper, series_terms_lower = Calc_Series_Terms(mesh_points,angular_momentum_quantum_number, T, Z , kappa, sigma, R_au, derivatives, potential_index, phi_r)
-    wave_function_upper, wave_function_lower = Solve_Power_Series(series_terms_upper, series_terms_lower, mesh_points)
+    series_terms_upper, series_terms_lower = calc_series_terms(mesh_points,angular_momentum_quantum_number, T, Z , kappa, sigma, R_au, derivatives, potential_index, phi_r)
+    wave_function_upper, wave_function_lower = solve_power_series(series_terms_upper, series_terms_lower, mesh_points)
     N, delta, r_c = Normalization_Constant(mesh_points, rc_idx ,wave_function_upper,wave_function_lower, Analytic_normalization_const, T, k, eta, W, kappa, Z, Lambda, sigma, R_au, potential_index, phi_r)
 
     if potential_index == 3:
@@ -982,7 +1171,7 @@ def Visualize(config,cnf):
     plt.xlabel("r in a.u")
     plt.ylabel("P(r)")
     plt.grid(True)
-    plt.title(f"E = {T: .2g}, Z = {Z}, A = {N: .3g}, delta = {delta: .3g}, N = {r_N}, DRN = {DRN} , r2 = {r2}, r_end = {r_END}, r_c = {r_c: .3g}")
+    plt.title(f"E = {T: .2g}, Z = {Z}, A = {N: .5g}, delta = {delta: .3g}, N = {r_N}, DRN = {DRN} , r2 = {r2}, r_end = {r_END}, r_c = {r_c: .3g}")
     plt.legend()
     plt.show()
 
@@ -1018,7 +1207,7 @@ def Generate_Fermi_Data(config,cnf):
     DRN = config["mesh_grid"]["upper_limit_step_size"]#Upper limit on distance between points near the end regime (make sure this stays small enough or wavefunc will not converge at larger distances r)
 
     k_max = np.sqrt(T_range[0]*(T_range[0] + 2*C**2))/C
-    r_END = obtain_mesh_range(k_max, Z, R_au, potential_index, phi_r)
+    r_END = obtain_mesh_range(k_max, Z, R_au, potential_index, phi_r, potential)
 
     if r_N is None:
         r_N = 10000
@@ -1030,7 +1219,7 @@ def Generate_Fermi_Data(config,cnf):
         A_grid = ((r_END - (r_N - 1) *r2) / r_END) * (DRN / (DRN -r2))
 
     print(f"resolution set to {r_N} mesh points")
-    mesh_points = mesh_grid(r_END, A_grid, r_N, r2, DRN, R_au)
+    mesh_points = radial_grid(r_END, A_grid, r_N, r2, DRN, R_au)
 
     ###Setting up cubic spline
     N_V = 50000
@@ -1068,9 +1257,9 @@ def Generate_Fermi_Data(config,cnf):
             Analytic_normalization_const = 1 /Lambda * 1/np.sqrt((Z/C)**2 * (W+C**2)**2 + (kappa + Lambda)**2 *(k*C)**2)
 
             print(f"Finding wave function for T = {T}, iter = {i}, eta = {eta}")
-            rc_idx = Find_rc(mesh_points, k, Z, R_au, potential_index, phi_r)
-            series_terms_upper, series_terms_lower = Calc_Series_Terms(mesh_points,angular_momentum_quantum_number, T, Z , kappa, sigma ,R_au, derivatives, potential_index, phi_r)
-            wave_function_upper, wave_function_lower = Solve_Power_Series(series_terms_upper, series_terms_lower, mesh_points)
+            rc_idx = find_rc(mesh_points, k, Z, R_au, potential_index, phi_r, potential)
+            series_terms_upper, series_terms_lower = calc_series_terms(mesh_points,angular_momentum_quantum_number, T, Z , kappa, sigma ,R_au, derivatives, potential_index, phi_r)
+            wave_function_upper, wave_function_lower = solve_power_series(series_terms_upper, series_terms_lower, mesh_points)
             N, delta, r_c = Normalization_Constant(mesh_points, rc_idx ,wave_function_upper,wave_function_lower, Analytic_normalization_const, T, k, eta, W, kappa, Z, Lambda, sigma, R_au, potential_index, phi_r)
 
             P_list.append(N*wave_function_upper)
