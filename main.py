@@ -5,8 +5,8 @@ import json
 import argparse
 
 from scipy.optimize import bracket
-from algorithms.Dirac_numerical_radial import Visualize, Generate_Fermi_Data
-from algorithms.Simkovic import Calc_double_beta_decay_spectrum
+from algorithms.dirac_numerical_radial import Visualize, Generate_Fermi_Data
+from algorithms.radial_data_generator import Calc_double_beta_decay_spectrum
 from configurations.isotopes import ISOTOPES
 
 
@@ -32,7 +32,7 @@ def clean_name(name):
 
 def main():
 
-    with open("config.json") as f:
+    with open("configurations/config.json") as f:
         config = json.load(f)
 
     parser = argparse.ArgumentParser(description="Run double beta decay code")
