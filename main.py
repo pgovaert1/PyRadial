@@ -153,6 +153,9 @@ def main():
         "Z": isotope_data["Z"],
         "A": isotope_data["A"],
         "Q": isotope_data["Q"],
+        "Simkovic_Gs": isotope_data["G_values"],
+        "Simkovic_Hs": isotope_data["H_values"],
+
         "angular_momentum_l": config["parameters"]["angular_momentum_l"],
         "kappa": config["parameters"]["kappa"]
         }
