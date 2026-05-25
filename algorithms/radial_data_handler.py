@@ -14,7 +14,7 @@ import mpmath as mp
 import os
 import glob, re
 from configurations.physics_constants import ME, ALPHA, GF, VUD, HBAR_C, GA, AU, C, E_HARTREE
-
+from algorithms.integrands import phase_space_integrand , spectrum_epsilon 
 
 Gbeta = GF * VUD # Effective weak coupling constant in MeV^-2
 c2n = ME * (Gbeta * ME ** 2)**4 / (8 * np.pi**7)
@@ -357,9 +357,6 @@ def Fermi(Ee, Z, A, rN):
     return F# * (1 -firstorder_corr - secondorder_corr)
 
 
-
-#TODO write a func to compare f and g individually
-
 def plot_f_and_g(Ee, potential_index, cnf, data, output_directory_name):
     """
     Calculates and plots the numeric and analytic g and f Dirac wave function component for comparison
@@ -532,386 +529,31 @@ def plot_f_and_g(Ee, potential_index, cnf, data, output_directory_name):
 
 
 
-def electron_momentum(E):
+# ========== PHASE-SPACE FACTORS CALCULATION ==========
+
+def calculate_phase_space_factors(Q, Fermi_analytic, Fermi_numeric, E_numeric):
     """
-    Calcultes the relativistic electron momentum. Returns 0 if imaginary momentum (E^2 < ME^2)
+    Calculate phase-space factors G and H for double beta decay.
 
     Parameters
     ----------
-    E : ndarray
-        Total relativistic energy values
-
-    Returns
-    -------
-    ndarray
-        Relativistic electron momentum values
-    """
-    p_squared = E * E - ME * ME
-    if p_squared <= 0.0:
-        return 0.0
-    return np.sqrt(p_squared)
-
-
-def phase_space_polynomial(tag, x, y):
-    """
-    Compute the phase-space polynomial contribution for a given expansion term.
-
-    Parameters
-    ----------
-    tag : int
-        Identifier specifying which polynomial term to evaluate.
-        Supported values are:
-
-        - 0   : leading-order contribution
-        - 2   : second-order correction
-        - 4   : fourth-order correction
-        - 22  : alternate fourth-order correction
-
-    x : float
-        Sum of neutrino energies or equivalent kinematic variable.
-    y : float
-        Electron energy asymmetry variable, Ee1 - Ee2.
-
-    Returns
-    -------
-    float
-        Value of the selected phase-space polynomial.
-    """
-    if tag == 0:
-        return x**5 / 30.0
-    elif tag == 2:
-        return x**5 * (x*x + 7*y*y) / (420.0 * (2*ME)**2)
-    elif tag == 4:
-        return x**5 * (x**4 + 18*x*x*y*y + 21*y**4) / (5040.0 * (2*ME)**4)
-    elif tag == 22:
-        return x**5 * (x**4 - 6*x*x*y*y + 21*y**4) / (10080.0 * (2*ME)**4)
-    else:
-        raise ValueError(f"Unknowown tag: {tag}")
-
-
-def two_electron_integrand(Ee1, Ee2, Q_value, tag, fermi_func):
-    """
-    Evaluate the two-electron phase-space integrand.
-
-    Parameters
-    ----------
-    Ee1 : float
-        Total energy of the first electron.
-    Ee2 : float
-        Total energy of the second electron.
-    Q_value : float
+    Q : float
         Q-value of the decay process.
-    tag : int
-        Polynomial identifier passed to `phase_space_polynomial`.
-    fermi_func : callable
-        Function returning the Fermi function value for a given
-        electron energy.
+    Fermi_analytic : callable
+        Analytic Fermi function.
+    Fermi_numeric : callable
+        Numerical Fermi function from Dirac solutions.
+    E_numeric : callable
+        Numerical E function.
 
     Returns
     -------
-    float
-        Value of the phase-space integrand. Returns 0.0 for
-        kinematically forbidden configurations.
-
+    dict
+        Dictionary containing G_results, G_errors, G_results_num, G_errors_num, H_results_num, H_errors_num
     """
-    if not (ME <= Ee1 <= Q_value + ME):
-        return 0.0
-
-    Ee2_max = Q_value + 2.0 * ME - Ee1
-    if not (ME <= Ee2 <= Ee2_max):
-        return 0.0
-
-    p1 = electron_momentum(Ee1)
-    p2 = electron_momentum(Ee2)
-    if p1 == 0 or p2 == 0:
-        return 0.0
-
-    F1 = fermi_func(Ee1)
-    F2 = fermi_func(Ee2)
-
-    neutrino_energy_sum = Q_value + 2*ME - Ee1 - Ee2
-    energy_assymetry = Ee1 - Ee2
-
-    polynomail = phase_space_polynomial(tag, neutrino_energy_sum, energy_assymetry)
-
-    pre_factor = MeVtoyr * c2n / (ME**11 * np.log(2))
-    return float(pre_factor * F1 * F2 * p1 * Ee1 * p2 * Ee2 * polynomail)
-
-
-def phase_space_integrand(tag, Q_value, fermi_func):
-    """
-    Construct a two-dimensional phase-space integrand function.
-
-    Parameters
-    ----------
-    tag : int
-        Polynomial identifier passed to `phase_space_polynomial`.
-    Q_value : float
-        Q-value of the decay process.
-    fermi_func : callable
-        Function returning the Fermi correction factor.
-
-    Returns
-    -------
-    callable
-        Function of the form f(Ee2, Ee1).
-    """
-    return lambda Ee2, Ee1: two_electron_integrand(Ee1, Ee2, Q_value, tag, fermi_func)
-
-
-def energies_eps_D(eps, D):
-    """
-    Convert epsilon and asymmetry variables into electron energies.
-
-    Parameters
-    ----------
-    eps : float
-        Sum kinetic-energy variable.
-    D : float
-        Energy asymmetry parameter.
-
-    Returns
-    -------
-    Ee1 : float
-        Electron energie value for electron 1
-    Ee2 : float
-        Electron energie value for electron 2
-    """
-    Ee1 = ME + D + 0.5*eps
-    Ee2 = ME - D + 0.5*eps
-    return Ee1, Ee2
-
-def phase_combo(Q_minus_eps, D):
-    """
-    Compute the combined phase-space polynomial expansion.
-
-    Parameters
-    ----------
-    Q_minus_eps : float
-        Difference Q - eps, corresponding to the available
-        neutrino energy.
-    D : float
-        Electron energy asymmetry parameter.
-
-    Returns
-    -------
-    float
-        Weighted sum of phase-space polynomial contributions.
-    """
-    x = Q_minus_eps
-    y = 2*D  # y = Ee1 - Ee2 = 2Δ
-
-    A0  = x**5 / 30.0
-    A2  = x**5 * (x*x + 7*y*y) / (420.0 * (2.0*ME)**2)
-    A4  = x**5 * (x**4 + 18.0*x*x*y*y + 21.0*y**4) / (5040.0 * (2.0*ME)**4)
-    A22 = x**5 * (x**4 - 6.0*x*x*y*y + 21.0*y**4) / (10080.0 * (2.0*ME)**4)
-
-    return A0 + A2*xi31 + A4*(xi31**2/3.0 + xi51) + A22*(xi31**2/3.0)
-
-def epsilon_spectrum_integrand(eps, D, Q_value, fermi_func):
-    """
-    Evaluate the integrand of the epsilon spectrum distribution.
-
-    Parameters
-    ----------
-    eps : float
-        Sum kinetic-energy variable.
-    D : float
-        Electron energy asymmetry parameter.
-    Q_value : float
-        Q-value of the decay process.
-    fermi_func : callable
-        Function returning the Fermi function value.
-
-    Returns
-    -------
-    float
-        Value of the epsilon-spectrum integrand. Returns 0.0
-        outside the physical integration region.
-    """
-
-    if not (0.0 <= eps <= Q_value):
-        return 0.0
-    if not (-eps/2.0 <= D <= eps/2.0):
-        return 0.0
-
-    Ee1, Ee2 = energies_eps_D(eps, D)
-
-    p1 = electron_momentum(Ee1)
-    p2 = electron_momentum(Ee2)
-    if p1 == 0 or p2 == 0:
-        return 0.0
-
-    F1 = fermi_func(Ee1)
-    F2 = fermi_func(Ee2)
-
-    poly = phase_combo(Q_value - eps, D)
-    pre_factor = (GA ** 4 * MGT1**2 *MeVtoyr * c2n) / (ME**11)
-    return float(pre_factor * F1 * F2 * p1 * Ee1 * p2 * Ee2 * poly)
-
-def spectrum_epsilon(eps, Q_value, fermi_func):
-    """
-    Compute the epsilon spectrum by integrating over the asymmetry variable.
-
-    Parameters
-    ----------
-    eps : float
-        Sum kinetic-energy variable.
-    Q_value : float
-        Q-value of the decay process.
-    fermi_func : callable
-        Function returning the Fermi correction factor.
-
-    Returns
-    -------
-    float
-        Differential spectrum value at the specified `eps`.
-    """
-    if not (0.0 <= eps <= Q_value):
-                return 0.0
-    value, _ = quad(lambda D: epsilon_spectrum_integrand(eps, D, Q_value, fermi_func),
-                    -eps/2.0,
-                    eps/2.0,
-                    epsabs=1e-16,
-                    epsrel=1e-14,
-                    limit=20000,
-                    points=[-eps/2.0, 0.0, eps/2.0])
-    return value
-
-
-def Calc_double_beta_decay_spectrum(config,cnf):
-    """
-    Compute phase-space factors, half-lives, and energy spectra for
-    two-neutrino double beta decay (2νββ).
-
-    Parameters
-    ----------
-    config : dict
-        Main configuration dictionary containing calculation settings found in /Configurations/config.json
-
-    cnf : dict
-        Dictionary containing the isotope configurations
-        - "Z" : Atomic number.
-        - "A" : Mass number.
-        - "Q" : MeV Q-value.
-
-    Returns
-    -------
-    None
-        The function produces output files, plots, and printed diagnostic
-        information but does not explicitly return a value.
-
-    Notes
-    -----
-    This routine performs the complete numerical workflow for evaluating
-    double beta decay phase-space observables, including:
-
-    - loading radial Dirac wavefunction data,
-    - constructing numerical and analytical Fermi functions,
-    - computing phase-space integrals G0, G2, G4, and G22,
-    - evaluating alternative H-type integrals,
-    - calculating decay half-lives,
-    - generating epsilon-spectrum distributions,
-    - normalizing and validating spectra,
-    - saving plots and numerical results to disk.
-
-    The calculation compares:
-
-    - analytical pure Coulomb Fermi functions,
-    - numerical Fermi functions derived from Dirac solutions,
-    - additional electron wavefunction corrections through E_function.
-
-    Generated Outputs
-    -----------------
-    The function creates several outputs:
-
-    - plots of radial wavefunctions,
-    - comparisons of analytical and numerical Fermi functions,
-    - differential epsilon spectra,
-    - normalized spectra,
-    - text file of calculated phase-space factors and half-lives.
-    """
-    Z = cnf["Z"] # Atomic number
-    A = cnf["A"] # Atomic Mass number
-    Q = cnf["Q"] # MeV Q-value
-    rN = 1.2 * A ** (1 / 3) / HBAR_C # Nuclear radius
-
-    potential_index = config["generator"]["potential_index"]
-
-    # if config["paths"]["output_directory"] is None:
-    #     main_output_directory = Path("Dirac_" + config["isotope"])
-    # else:
-    #     main_output_directory = Path(config["paths"]["output_directory"])
-
-    main_output_directory = Path(config["paths"]["output_directory"]) / f"Dirac_{config['isotope']}"
-    directory_name = main_output_directory/ "NPZ_files"
-    file_name_kappa_p = f"{config['isotope']}_potential_{potential_index}_kappa_+1_Z{Z:}_A{A}.npz"
-    file_name_kappa_n = f"{config['isotope']}_potential_{potential_index}_kappa_-1_Z{Z:}_A{A}.npz"
-
-    
-
-    results_output_directory = main_output_directory/ "phase_space_results"
-
-    results_output_directory.mkdir(parents = True, exist_ok = True)
-
-    output_file = f"results_potential_{potential_index}_Z{Z}_A{A}.txt"
-    results_output_path = results_output_directory /output_file
-
-
-
-    plots_output_directory =  main_output_directory/ "plots"
-    plots_output_directory.mkdir(parents = True, exist_ok = True)
-
-
-
-    T_n, r_n, P_n, Q_n = load_data(directory_name, file_name_kappa_n)
-    T_p, r_p, P_p, Q_p = load_data(directory_name, file_name_kappa_p)
-
-
-
-    idx_R, mesh_point_R_au = find_mesh_point_R_au(r_n, rN)
-
-    data = {"T":T_n, "P_n":P_n, "Q_p":Q_p, "idx_R":idx_R, "mesh_point_R_au":mesh_point_R_au}
-
-    T_MeV = T_n * E_HARTREE/1e6
-    Ee = T_MeV + ME
-
-    plot_f_and_g(Ee, potential_index,cnf, data, plots_output_directory)
-
-    # Optional quick visualization of Fermi function
-    x_plot = np.linspace(ME+1e-3, Q + ME, 2000)
-    Analytic_fermi_plot = Fermi(x_plot, Z, A, rN)
-    Numeric_fermi_plot = Fermi_numerical(x_plot, Z, A, data)
-
-
-    fig, (ax1, ax2) = plt.subplots(2,1, figsize=(12,8), sharex = True, gridspec_kw={"height_ratios": [3,1]})
-    ax1.plot(x_plot, Analytic_fermi_plot, label='Pure Coulomb Fermi Analytical')
-    ax1.plot(x_plot, Numeric_fermi_plot , label='Fermi Numerical')
-
-    ax1.set_xlabel('Electron Energy (MeV)')
-    ax1.set_ylabel('Fermi Function Value')
-    ax1.set_title('Fermi Function vs Electron Energy')
-    ax1.grid(True)
-    ax1.legend()
-
-    percent_diff_fermi_func = 100.0 * (Numeric_fermi_plot - Analytic_fermi_plot)/ Analytic_fermi_plot
-
-    ax2.plot(x_plot, percent_diff_fermi_func)
-    ax2.set_ylabel(f"% difference")
-    ax2.grid(True)
-
-    plt.tight_layout()
-    fig.savefig(os.path.join(plots_output_directory, f"Fermi_Function_potential_{potential_index}_Z{Z}_A{A}_test.png"), dpi = 300)
-    plt.show()
-
-
-
-    Fermi_analytic = lambda Ee: Fermi(Ee, Z , A, rN)
-    Fermi_numeric = lambda Ee: Fermi_numerical(Ee, Z , A, data)
-    E_numeric = lambda Ee: E_function(Ee, Z, A, data)
-
     def bounds_Ee1():
         return [ME, Q + ME]
+    
     def bounds_Ee2(Ee1):
         return [ME, Q + 2.0 * ME - Ee1]
 
@@ -920,111 +562,342 @@ def Calc_double_beta_decay_spectrum(config,cnf):
 
     tags = [0, 2, 4, 22]
     G_results_list, G_errors_list = [], []
-    G_results_num_list, G_errors_num_list = [] , []
-    H_results_num_list, H_errors_num_list = [] , []
+    G_results_num_list, G_errors_num_list = [], []
+    H_results_num_list, H_errors_num_list = [], []
+    
     for t in tags:
+        # Analytic G values
         G_output = nquad(phase_space_integrand(t, Q, Fermi_analytic), [bounds_Ee2, bounds_Ee1], opts=[opts_Ee2, opts_Ee1])
-        G_result, G_error = G_output[:2] #### Needed this extra line to avoid diagnostic warning about wrong output??
-        G_results_list.append(G_result); G_errors_list.append(G_error)
+        G_result, G_error = G_output[:2]
+        G_results_list.append(G_result)
+        G_errors_list.append(G_error)
 
+        # Numeric G values
         G_output_num = nquad(phase_space_integrand(t, Q, Fermi_numeric), [bounds_Ee2, bounds_Ee1], opts=[opts_Ee2, opts_Ee1])
         G_result_num, G_error_num = G_output_num[:2]
-        G_results_num_list.append(G_result_num); G_errors_num_list.append(G_error_num)
+        G_results_num_list.append(G_result_num)
+        G_errors_num_list.append(G_error_num)
 
-        H_output_num = nquad(phase_space_integrand(t, Q, E_numeric),  [bounds_Ee2, bounds_Ee1], opts=[opts_Ee2, opts_Ee1])
+        # H values (numeric only)
+        H_output_num = nquad(phase_space_integrand(t, Q, E_numeric), [bounds_Ee2, bounds_Ee1], opts=[opts_Ee2, opts_Ee1])
         H_result, H_error = H_output_num[:2]
-        H_results_num_list.append(H_result); H_errors_num_list.append(H_error)
+        H_results_num_list.append(H_result)
+        H_errors_num_list.append(H_error)
 
-    G_results = np.asarray(G_results_list)
-    G_errors = np.asarray(G_errors_list)
-
-    G_results_num = np.asarray(G_results_num_list)
-    G_errors_num = np.asarray(G_errors_num_list)
-
-    H_result_num = np.asarray(H_results_num_list)
-    H_errors_num = np.asarray(H_errors_num_list)
-
-
-    halflife = 1/(GA ** 4 * MGT1**2 * (G_results[0] + xi31 * G_results[1] + 1/3 * xi31 ** 2 * G_results[3] + (1/3 * xi31**2 + xi51)* G_results[2]))
-    halflife_num = 1/(GA ** 4 * MGT1**2 * (G_results_num[0] + xi31 * G_results_num[1] + 1/3 * xi31 ** 2 * G_results_num[3] + (1/3 * xi31**2 + xi51)* G_results_num[2]))
+    return {
+        "G_results": np.asarray(G_results_list),
+        "G_errors": np.asarray(G_errors_list),
+        "G_results_num": np.asarray(G_results_num_list),
+        "G_errors_num": np.asarray(G_errors_num_list),
+        "H_results_num": np.asarray(H_results_num_list),
+        "H_errors_num": np.asarray(H_errors_num_list),
+    }
 
 
+# ========== FERMI FUNCTION PLOTTING ==========
+
+def plot_fermi_function(Q, Z, A, rN, data, plots_output_directory, potential_index):
+    """
+    Plot analytical vs numerical Fermi functions.
+
+    Parameters
+    ----------
+    Q : float
+        Q-value of the decay process.
+    Z : int
+        Atomic number.
+    A : int
+        Mass number.
+    rN : float
+        Nuclear radius (dimensionless).
+    data : dict
+        Wavefunction data dictionary.
+    plots_output_directory : str or Path
+        Directory to save plots.
+    potential_index : int
+        Index specifying which potential model is used.
+    """
+    x_plot = np.linspace(ME + 1e-3, Q + ME, 2000)
+    Analytic_fermi_plot = Fermi(x_plot, Z, A, rN)
+    Numeric_fermi_plot = Fermi_numerical(x_plot, Z, A, data)
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True, gridspec_kw={"height_ratios": [3, 1]})
+    
+    # Top plot: comparison
+    ax1.plot(x_plot, Analytic_fermi_plot, lw=1.5, label='Pure Coulomb Analytic')
+    ax1.plot(x_plot, Numeric_fermi_plot, lw=1.5, label='Numerical')
+    ax1.set_ylabel('Fermi Function Value')
+    ax1.set_title('Fermi Function vs Electron Energy')
+    ax1.grid(True)
+    ax1.legend()
+
+    # Bottom plot: percentage difference
+    percent_diff_fermi = 100.0 * (Numeric_fermi_plot - Analytic_fermi_plot) / Analytic_fermi_plot
+    ax2.plot(x_plot, percent_diff_fermi, lw=1.5)
+    ax2.set_xlabel('Electron Energy (MeV)')
+    ax2.set_ylabel('% Difference')
+    ax2.grid(True)
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(plots_output_directory, f"Fermi_Function_potential_{potential_index}_Z{Z}_A{A}.png"), dpi=300)
+    plt.show()
 
 
+# ========== SPECTRUM CALCULATION AND PLOTTING ==========
+
+def calculate_and_plot_spectra(Q, Z, A, Fermi_analytic, Fermi_numeric, plots_output_directory, potential_index):
+    """
+    Calculate and plot 2νββ epsilon spectrum.
+
+    Parameters
+    ----------
+    Q : float
+        Q-value of the decay process.
+    Z : int
+        Atomic number.
+    A : int
+        Mass number.
+    Fermi_analytic : callable
+        Analytic Fermi function.
+    Fermi_numeric : callable
+        Numerical Fermi function.
+    plots_output_directory : str or Path
+        Directory to save plots.
+    potential_index : int
+        Index specifying which potential model is used.
+
+    Returns
+    -------
+    dict
+        Dictionary containing spectrum data and rates
+    """
     eps_grid = np.linspace(0.0, Q, 400)
     spectrum_vals = np.array([spectrum_epsilon(eps, Q, Fermi_analytic) for eps in eps_grid])
     spectrum_vals_num = np.array([spectrum_epsilon(eps, Q, Fermi_numeric) for eps in eps_grid])
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12,8), sharex = True, gridspec_kw = {"height_ratios": [3,1]})
-    ax1.plot(eps_grid, spectrum_vals, lw=1.5, label = "pure Coulomb analytical")
-    ax1.plot(eps_grid, spectrum_vals_num, lw = 1.5 ,label = "numerical")
-    ax1.set_xlabel('epsilon = Ee1 + Ee2 − 2 me (MeV)')
+    # ========== Plot differential spectrum ==========
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True, gridspec_kw={"height_ratios": [3, 1]})
+    
+    ax1.plot(eps_grid, spectrum_vals, lw=1.5, label="Pure Coulomb Analytic")
+    ax1.plot(eps_grid, spectrum_vals_num, lw=1.5, label="Numerical")
     ax1.set_ylabel('dΓ/dε (1/yr per MeV)')
-    ax1.legend()
     ax1.set_title('2νββ Spectrum vs epsilon')
+    ax1.legend()
     ax1.grid(True)
 
-    percent_diff_epsilon_spectrum = 100.0 * (spectrum_vals_num - spectrum_vals) / spectrum_vals
-
-    ax2.plot(eps_grid, percent_diff_epsilon_spectrum)
-    ax2.set_ylabel(f"% diff")
+    percent_diff_eps = 100.0 * (spectrum_vals_num - spectrum_vals) / spectrum_vals
+    ax2.plot(eps_grid, percent_diff_eps, lw=1.5)
+    ax2.set_xlabel('epsilon = Ee1 + Ee2 − 2 me (MeV)')
+    ax2.set_ylabel('% Difference')
     ax2.grid(True)
 
     plt.tight_layout()
-    fig.savefig(os.path.join(plots_output_directory, f"Spectrum_potential_{potential_index}_Z{Z}_A{A}_test.png"), dpi = 300)
+    plt.savefig(os.path.join(plots_output_directory, f"Spectrum_potential_{potential_index}_Z{Z}_A{A}.png"), dpi=300)
     plt.show()
 
+    # ========== Calculate total rates ==========
     total_rate, total_err = quad(lambda eps: spectrum_epsilon(eps, Q, Fermi_analytic), 0.0, Q,
-                                epsabs=1e-18, epsrel=1e-16, limit=20000, points=[0.0, Q/2.0, Q])
+                                 epsabs=1e-18, epsrel=1e-16, limit=20000, points=[0.0, Q/2.0, Q])
     total_rate_num, total_err_num = quad(lambda eps: spectrum_epsilon(eps, Q, Fermi_numeric), 0.0, Q,
-                                epsabs=1e-18, epsrel=1e-16, limit=20000, points=[0.0, Q/2.0, Q])
+                                         epsabs=1e-18, epsrel=1e-16, limit=20000, points=[0.0, Q/2.0, Q])
 
-    spec_vals_norm = spectrum_vals/total_rate
-    spec_val_norm_num = spectrum_vals_num/total_rate_num
+    # ========== Plot normalized spectrum ==========
+    spec_vals_norm = spectrum_vals / total_rate
+    spec_vals_norm_num = spectrum_vals_num / total_rate_num
 
-    plt.figure(figsize=(12,8))
-    plt.plot(eps_grid, spec_vals_norm, lw = 1.5, label = "analytic")
-    plt.plot(eps_grid, spec_val_norm_num, lw = 1.5, label = "numeric")
-    plt.xlabel('epsilon = Ee1 + Ee2 - 2 me (MeV)')
+    plt.figure(figsize=(12, 8))
+    plt.plot(eps_grid, spec_vals_norm, lw=1.5, label="Analytic")
+    plt.plot(eps_grid, spec_vals_norm_num, lw=1.5, label="Numeric")
+    plt.xlabel('epsilon = Ee1 + Ee2 − 2 me (MeV)')
     plt.ylabel('1/Γ dΓ/dε')
-    plt.legend()
     plt.title("Normalized 2νββ Spectrum")
+    plt.legend()
     plt.grid(True)
     plt.show()
 
     norm_check = np.trapezoid(spec_vals_norm, eps_grid)
-    norm_check_num = np.trapezoid(spec_val_norm_num, eps_grid)
-    print(f"analytic norm check: {norm_check:.10g}, numeric norm check: {norm_check_num:.10g}")
+    norm_check_num = np.trapezoid(spec_vals_norm_num, eps_grid)
+    print(f"Normalization check - Analytic: {norm_check:.10g}, Numeric: {norm_check_num:.10g}")
+
+    return {
+        "eps_grid": eps_grid,
+        "spectrum_vals": spectrum_vals,
+        "spectrum_vals_num": spectrum_vals_num,
+        "total_rate": total_rate,
+        "total_rate_num": total_rate_num,
+        "total_err": total_err,
+        "total_err_num": total_err_num,
+    }
 
 
-    Simkovic_Gs = cnf["Simkovic_Gs"] # G0, G2, G4, G22 from Simkovic et al. 2013
-    Simkovic_Hs = cnf["Simkovic_Hs"] # H0, H2, H4, H22 from Simkovic et al. 2013
+# ========== RESULTS OUTPUT ==========
+
+def write_results_to_file(results_output_path, config, potential_index, Z, A, G_results, G_results_num, 
+                          H_results_num, halflife, halflife_num, total_rate, total_rate_num, 
+                          total_err, total_err_num, cnf):
+    """
+    Write phase-space factors and half-lives to output file.
+
+    Parameters
+    ----------
+    results_output_path : str or Path
+        Path to output file.
+    config : dict
+        Configuration dictionary.
+    potential_index : int
+        Potential model index.
+    Z, A : int
+        Atomic and mass numbers.
+    G_results, G_results_num : ndarray
+        Analytic and numeric G factors.
+    H_results_num : ndarray
+        Numeric H factors.
+    halflife, halflife_num : float
+        Analytic and numeric half-lives.
+    total_rate, total_rate_num : float
+        Total decay rates.
+    total_err, total_err_num : float
+        Integration errors.
+    cnf : dict
+        Isotope configuration dictionary.
+    """
+    # Determine scheme
+    scheme_map = {0: "B", 2: "A", 3: "C"}
+    scheme = scheme_map.get(potential_index, "Unknown")
+
+    Simkovic_Gs = cnf.get("Simkovic_Gs", None)
+    Simkovic_Hs = cnf.get("Simkovic_Hs", None)
 
     with open(results_output_path, "w") as f:
-        scheme = None
-        if potential_index == 0:
-            scheme = "B"
-        elif potential_index == 2:
-            scheme = "A"
-        elif potential_index == 3:
-            scheme = "C"
+        f.write(f"### Double Beta Decay Results for {config['isotope']} using Scheme {scheme} ###\n\n")
+        
+        # ========== G factors ==========
+        f.write("G FACTORS (Phase-Space)\n")
+        f.write(f"{'Tags':<10} {'Analytic':<15} {'Numeric':<15} {'% Difference':<15}\n")
+        f.write("-" * 55 + "\n")
+        
+        tags = ["G0", "G2", "G4", "G22"]
+        for i, tag in enumerate(tags):
+            if Simkovic_Gs is not None:
+                percent_diff = 100.0 * (G_results_num[i] - Simkovic_Gs[i]) / Simkovic_Gs[i]
+            else:
+                percent_diff = 100.0 * (G_results_num[i] - G_results[i]) / G_results[i]
+            f.write(f"{tag:<10} {G_results[i]:<15.6e} {G_results_num[i]:<15.6e} {percent_diff:<15.6f}\n")
+        
+        if Simkovic_Gs is not None:
+            f.write(f"\nSimkovic Reference: {Simkovic_Gs}\n")
+        f.write("\n")
 
-        f.write(f"### Double Beta Decay Results for {config["isotope"]} using Scheme {scheme} ###\n\n")
+        # ========== H factors ==========
+        if Simkovic_Hs is not None:
+            f.write("H FACTORS\n")
+            f.write(f"{'Tags':<10} {'Numeric':<15} {'Simkovic':<15} {'% Difference':<15}\n")
+            f.write("-" * 55 + "\n")
+            for i, tag in enumerate(tags):
+                percent_diff = 100.0 * (H_results_num[i] - Simkovic_Hs[i]) / Simkovic_Hs[i]
+                f.write(f"{tag:<10} {H_results_num[i]:<15.6e} {Simkovic_Hs[i]:<15.6e} {percent_diff:<15.6f}\n")
+            f.write("\n")
+
+        # ========== Half-lives ==========
+        f.write("HALF-LIVES\n")
+        f.write("-" * 40 + "\n")
+        f.write(f"Calculated (Analytic):  {halflife:.6e} yr\n")
+        f.write(f"Calculated (Numeric):   {halflife_num:.6e} yr\n")
+        f.write(f"Experimental:           {2.19e21:.6e} yr\n\n")
+
+        # ========== Decay rates ==========
+        f.write("DECAY RATES FROM ε-SPECTRUM\n")
+        f.write("-" * 40 + "\n")
+        f.write(f"Analytic:  {1/total_rate:.6e} ± {total_err:.6e} yr\n")
+        f.write(f"Numeric:   {1/total_rate_num:.6e} ± {total_err_num:.6e} yr\n")
 
 
-        f.write(f"G numerical converted to 1/yr units  [G0, G2, G4, G22]: {G_results_num} \n")
-        f.write(f"G Simkovic results ----------------> [G0, G2, G4, G22]: {Simkovic_Gs} \n")
-        f.write(f"delta G numerical vs Simkovic:                          {100.0 * (G_results_num - Simkovic_Gs)/Simkovic_Gs} % \n\n")
-        f.write(f"H numerical -----------------------> [H0, H2, H4, H22]: {H_result_num}\n")
-        f.write(f"H Simkovic results ----------------> [H0, H2, H4, H22]: {Simkovic_Hs} \n")
-        f.write(f"delta H numerical vs Simkovic:                          {100.0 * (H_result_num - Simkovic_Hs)/Simkovic_Hs} % \n\n")
+# ========== MAIN SPECTRUM CALCULATION ==========
 
-        f.write(f"Calculated analytic half life: {halflife: .6e} \n")
-        f.write(f"Calculated numeric half life:  {halflife_num: .6e} \n")
-        f.write(f"Experimental half life:        {2.19e21: .6e} \n\n")
+def calc_double_beta_decay_spectrum(config, cnf):
+    """
+    Compute phase-space factors, half-lives, and energy spectra for
+    two-neutrino double beta decay (2νββ).
 
-        f.write(f"Total rate from ε-spectrum [yr]: {1/total_rate} ± {total_err} \n")
-        f.write(f"Total rate from ε-spectrum [yr]: {1/total_rate_num} ± {total_err_num} \n")
+    Orchestrates the calculation pipeline:
+    1. Load wavefunction data from NPZ files
+    2. Plot f, g, and Fermi functions
+    3. Calculate phase-space factors (G and H)
+    4. Calculate and plot spectra
+    5. Write results to file
+
+    Parameters
+    ----------
+    config : dict
+        Main configuration dictionary
+    cnf : dict
+        Isotope configuration dictionary with Z, A, Q values
+    """
+    # ========== SETUP ==========
+    Z = cnf["Z"]
+    A = cnf["A"]
+    Q = cnf["Q"]
+    rN = 1.2 * A ** (1 / 3) / HBAR_C
+    potential_index = config["generator"]["potential_index"]
+
+    # ========== DIRECTORIES ==========
+    main_output_directory = Path(config["paths"]["output_directory"]) / f"Dirac_{config['isotope']}"
+    directory_name = main_output_directory / "NPZ_files"
+    plots_output_directory = main_output_directory / "plots"
+    plots_output_directory.mkdir(parents=True, exist_ok=True)
+
+    results_output_directory = main_output_directory / "phase_space_results"
+    results_output_directory.mkdir(parents=True, exist_ok=True)
+    results_output_path = results_output_directory / f"results_potential_{potential_index}_Z{Z}_A{A}.txt"
+
+    # ========== LOAD DATA ==========
+    file_name_kappa_n = f"{config['isotope']}_potential_{potential_index}_kappa_-1_Z{Z}_A{A}.npz"
+    file_name_kappa_p = f"{config['isotope']}_potential_{potential_index}_kappa_+1_Z{Z}_A{A}.npz"
+
+    T_n, r_n, P_n, Q_n = load_data(directory_name, file_name_kappa_n)
+    T_p, r_p, P_p, Q_p = load_data(directory_name, file_name_kappa_p)
+
+    idx_R, mesh_point_R_au = find_mesh_point_R_au(r_n, rN)
+    data = {"T": T_n, "P_n": P_n, "Q_p": Q_p, "idx_R": idx_R, "mesh_point_R_au": mesh_point_R_au}
+
+    T_MeV = T_n * E_HARTREE / 1e6
+    Ee = T_MeV + ME
+
+    # ========== PLOT WAVEFUNCTION COMPARISONS ==========
+    plot_f_and_g(Ee, potential_index, cnf, data, plots_output_directory)
+
+    # ========== PLOT FERMI FUNCTION ==========
+    plot_fermi_function(Q, Z, A, rN, data, plots_output_directory, potential_index)
+
+    # ========== SETUP FERMI FUNCTIONS ==========
+    Fermi_analytic = lambda Ee: Fermi(Ee, Z, A, rN)
+    Fermi_numeric = lambda Ee: Fermi_numerical(Ee, Z, A, data)
+    E_numeric = lambda Ee: E_function(Ee, Z, A, data)
+
+    # ========== CALCULATE PHASE-SPACE FACTORS ==========
+    phase_space_data = calculate_phase_space_factors(Q, Fermi_analytic, Fermi_numeric, E_numeric)
+    G_results = phase_space_data["G_results"]
+    G_results_num = phase_space_data["G_results_num"]
+    H_results_num = phase_space_data["H_results_num"]
+
+    # ========== CALCULATE HALF-LIVES ==========
+    halflife = 1 / (GA ** 4 * MGT1 ** 2 * (G_results[0] + xi31 * G_results[1] + 
+                    1/3 * xi31 ** 2 * G_results[3] + (1/3 * xi31 ** 2 + xi51) * G_results[2]))
+    
+    halflife_num = 1 / (GA ** 4 * MGT1 ** 2 * (G_results_num[0] + xi31 * G_results_num[1] + 
+                        1/3 * xi31 ** 2 * G_results_num[3] + (1/3 * xi31 ** 2 + xi51) * G_results_num[2]))
+
+    # ========== CALCULATE AND PLOT SPECTRA ==========
+    spectrum_data = calculate_and_plot_spectra(Q, Z, A, Fermi_analytic, Fermi_numeric, 
+                                               plots_output_directory, potential_index)
+
+    # ========== WRITE RESULTS ==========
+    write_results_to_file(results_output_path, config, potential_index, Z, A, G_results, G_results_num,
+                         H_results_num, halflife, halflife_num, spectrum_data["total_rate"],
+                         spectrum_data["total_rate_num"], spectrum_data["total_err"],
+                         spectrum_data["total_err_num"], cnf)
+    
+    print(f"\nResults written to: {results_output_path}")
 
 
 
