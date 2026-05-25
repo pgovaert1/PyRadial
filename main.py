@@ -6,7 +6,7 @@ import argparse
 
 from scipy.optimize import bracket
 from algorithms.dirac_numerical_radial import Visualize, Generate_Fermi_Data
-from algorithms.radial_data_generator import Calc_double_beta_decay_spectrum
+from algorithms.radial_data_handler import calc_double_beta_decay_spectrum
 from configurations.isotopes import ISOTOPES
 
 
@@ -170,7 +170,7 @@ def main():
         Visualize(config,cnf)
     elif mode == "data":
         print_potential(potential)
-        Calc_double_beta_decay_spectrum(config,cnf)
+        calc_double_beta_decay_spectrum(config,cnf)
     elif mode == None:
         iso = config["isotope"]
         model = config["nuclear_model"]
@@ -188,7 +188,7 @@ def main():
 
         print(f"Generating data complete ")
         print(f"Calculating phase space results and plotting Fermi function and 2νββ Spectrum\n")
-        Calc_double_beta_decay_spectrum(config,cnf)
+        calc_double_beta_decay_spectrum(config,cnf)
 
         print("Done")
 
