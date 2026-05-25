@@ -36,8 +36,8 @@
 
 "paths":{
         "output_file": "Test.npz",
-	"output_results_file": "results.txt",
-	"plot_directory": "plots",
-        "output_directory": null
+		"output_results_file": "results.txt",
+		"plot_directory": "plots",
+        "output_directory": "output"
         }
 }

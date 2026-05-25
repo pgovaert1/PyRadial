@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-#Importing libraries
+# ========== Importing libraries ==========
 import json
 import numpy as np
 import matplotlib.pyplot as plt
@@ -17,16 +17,11 @@ from configurations.physics_constants import ALPHA, C, EPSILON, AU, E_HARTREE, R
 from algorithms.thomas_fermi import make_phi_r
 from algorithms.grid_creation import find_x, radial_grid, obtain_mesh_range, find_rc
 
-
-
-
+# ========== Set arbitrary precision arithmetic ==========
 mp.mp.dps = 30
 
 
-
-###################################
-###Setup Cubic Spline potential V
-###################################
+# ========== Setup Cubic Spline potential V ==========
 
 def potential(r, Z, R_au, potential_index, phi_r):
     """
@@ -50,23 +45,29 @@ def potential(r, Z, R_au, potential_index, phi_r):
     float or ndarray
         Evaluated potential value(s).
     """
-
-
-    Z_sing = Z  ###Define the singular potential term which blows up at r ->0
+    Z_sing = Z  # Singular potential term which blows up at r → 0
 
     if potential_index == 0:
-        return Z_sing/r
+        # Coulomb potential
+        return Z_sing / r
 
     elif potential_index == 1:
-        V0= -0.5
+        # Coulomb + exponential perturbation
+        V0 = -1
         A = 1
-        return Z_sing/r + V0 * np.exp(-A*r)
+        return Z_sing / r + V0 * np.exp(-A * r)
 
     elif potential_index == 2:
-        r_arr = np.asarray(r,dtype = float)
-        V = Z_sing/ r_arr
+        # Finite nuclear model (uniform charge distribution)
+        r_arr = np.asarray(r, dtype=float)
+        V = Z_sing / r_arr
+
         inside = r_arr < R_au
-        V = np.where(inside, Z_sing/(2*R_au) * (3 - (r_arr/R_au)**2), V)
+        V = np.where(
+            inside,
+            Z_sing / (2 * R_au) * (3 - (r_arr / R_au) ** 2),
+            V
+        )
 
         if np.isscalar(r):
             return float(V)
@@ -74,33 +75,32 @@ def potential(r, Z, R_au, potential_index, phi_r):
             return V
 
     elif potential_index == 3:
-        r_arr = np.asarray(r, dtype =float)
+        # Thomas-Fermi screening potential
+        r_arr = np.asarray(r, dtype=float)
 
-        V_A =  potential(r,Z,R_au, 2,0)
+        V_A = potential(r, Z, R_au, 2, 0)
         phi_vals = phi_r(r_arr)
 
-        V_C = ((r_arr * V_A + 2.0 ) * phi_vals - 2.0) / r_arr
+        V_C = ((r_arr * V_A + 2.0) * phi_vals - 2.0) / r_arr
 
         if np.isscalar(r):
             return float(V_C)
         return V_C
 
     else:
-        raise RuntimeError("No proper potential function idex number was selected")
+        raise RuntimeError("No proper potential function index number was selected")
 
 
-#############################################################################################################
-### Calculate the potential parameters u0,u1,u2,u3 in accordance to RADIAL for the initial mesh step [0,rb]
-#############################################################################################################
+# ========== Calculate potential parameters u0,u1,u2,u3 for singular interval [0, r_b] ==========
 
 def singular_potential_parameters(r_b, T, Z, R_au, potential_index, phi_r):
     """
-    Generate cubic splined potential parameters (u0,u1,u2,u3) on singular range [0,r_b]
+    Generate cubic splined potential parameters (u0, u1, u2, u3) on singular range [0, r_b]
 
     Parameters
     ----------
     r_b : float
-        Final radial coordinate in given segment [0,r_b].
+        Final radial coordinate in given segment [0, r_b].
     T : float
         Kinetic energy in Hartree units.
     Z : int
@@ -119,7 +119,7 @@ def singular_potential_parameters(r_b, T, Z, R_au, potential_index, phi_r):
     u1 : float
         Second polynomial coefficient of cubic spline.
     u2 : float
-        Thrid polynomial coefficient of cubic spline.
+        Third polynomial coefficient of cubic spline.
     u3 : float
         Fourth polynomial coefficient of cubic spline.
 
@@ -127,46 +127,47 @@ def singular_potential_parameters(r_b, T, Z, R_au, potential_index, phi_r):
     h = r_b
     Z_sing = Z
 
-    if potential_index == 0:
-        V_reg = lambda r: potential(r, Z, R_au, potential_index, phi_r) - Z_sing/r
+    # ========== Define regular potential based on index ==========
+    if potential_index in (0,1):
+        V_reg = lambda r: potential(r, Z, R_au, potential_index, phi_r) - Z_sing / r
         u0 = ALPHA * Z_sing
-    elif potential_index in (1,2,3):
+    elif potential_index in (2, 3):
         V_reg = lambda r: potential(r, Z, R_au, potential_index, phi_r)
         u0 = 0.0
     else:
         raise RuntimeError("No proper potential potential_index selected")
 
+    # ========== Compute derivatives at R0 ==========
     v0 = float(V_reg(R0))
     dr = 1e-8
-    v1 = (V_reg(R0+dr) - V_reg(R0-dr)) / (2*dr)
-    v2 = (V_reg(R0+dr) - 2*V_reg(R0) + V_reg(R0-dr)) / (dr**2)
+    v1 = (V_reg(R0 + dr) - V_reg(R0 - dr)) / (2 * dr)
+    v2 = (V_reg(R0 + dr) - 2 * V_reg(R0) + V_reg(R0 - dr)) / (dr ** 2)
 
-    u1 = ALPHA * h *(v0-T)
-    u2 = ALPHA * h**2 * (v1)
-    u3 = ALPHA * h**3 * (0.5*v2)
+    # ========== Scale parameters by ALPHA and h ==========
+    u1 = ALPHA * h * (v0 - T)
+    u2 = ALPHA * h ** 2 * (v1)
+    u3 = ALPHA * h ** 3 * (0.5 * v2)
 
     return u0, u1, u2, u3
 
-#####################################################################################################################
-### Calculate the potential parameters u0,u1,u2,u3 in accordance to RADIAL for the any mesh step [ra,rb] for ra != 0
-#####################################################################################################################
+# ========== Calculate potential parameters u0,u1,u2,u3 for general interval [r_a, r_b] ==========
 
-def general_potential_parameters(r_a ,r_b, l, T, derivatives):
+def general_potential_parameters(r_a, r_b, l, T, derivatives):
     """
-    Generate cubic splined potential parameters (u0,u1,u2,u3) on range [r_a,r_b]
+    Generate cubic splined potential parameters (u0, u1, u2, u3) on range [r_a, r_b]
 
     Parameters
     ----------
     r_a : float
         Lower radial boundary of the interval [r_a, r_b].
     r_b : float
-        Upper radial boundary of the interval [0,r_b].
+        Upper radial boundary of the interval [0, r_b].
     l : int
         Orbital angular momentum quantum number.
     T : float
         Kinetic energy in Hartree units.
     derivatives : list
-        List made of zero, first, second and thrid order derivatives of the cubic splined potential
+        List made of zero, first, second and third order derivatives of the cubic splined potential
 
     Returns
     -------
@@ -175,7 +176,7 @@ def general_potential_parameters(r_a ,r_b, l, T, derivatives):
     u1 : float
         Second polynomial coefficient of cubic spline.
     u2 : float
-        Thrid polynomial coefficient of cubic spline.
+        Third polynomial coefficient of cubic spline.
     u3 : float
         Fourth polynomial coefficient of cubic spline.
 
@@ -183,30 +184,30 @@ def general_potential_parameters(r_a ,r_b, l, T, derivatives):
     ra = max(r_a, R0)
     rb = r_b
 
+    # ========== Extract derivatives at ra ==========
     rv0 = float(derivatives[0](ra))
     rv1 = float(derivatives[1](ra))
     rv2 = 0.5 * float(derivatives[2](ra))
-    rv3 = (1.0/6.0) * float(derivatives[3](ra))
+    rv3 = (1.0 / 6.0) * float(derivatives[3](ra))
 
-    v0 = rv0 - rv1*r_a + rv2*(r_a**2) - rv3* (r_a**3)
-    v1 = rv1 - 2.0* rv2 *r_a + 3.0 * rv3 * (r_a **2)
-    v2 = rv2 - 3.0*rv3 *r_a
+    # ========== Compute potential parameters via Taylor expansion ==========
+    v0 = rv0 - rv1 * r_a + rv2 * (r_a ** 2) - rv3 * (r_a ** 3)
+    v1 = rv1 - 2.0 * rv2 * r_a + 3.0 * rv3 * (r_a ** 2)
+    v2 = rv2 - 3.0 * rv3 * r_a
     v3 = rv3
 
-    h = r_b-r_a
+    h = r_b - r_a
 
-    u0 = ALPHA * (v0 + (v1-T)*r_a + v2*r_a**2 + v3*r_a**3)
-    u1 = ALPHA *h * ((v1-T) + 2*v2*r_a + 3*v3*r_a**2)
-    u2 = ALPHA *h**2 * (v2 + 3*v3*r_a)
-    u3 = ALPHA *v3*h**3
-
+    # ========== Scale parameters by ALPHA constant ==========
+    u0 = ALPHA * (v0 + (v1 - T) * r_a + v2 * r_a ** 2 + v3 * r_a ** 3)
+    u1 = ALPHA * h * ((v1 - T) + 2 * v2 * r_a + 3 * v3 * r_a ** 2)
+    u2 = ALPHA * h ** 2 * (v2 + 3 * v3 * r_a)
+    u3 = ALPHA * v3 * h ** 3
 
     return u0, u1, u2, u3
 
-####################################################################################################################
-### Setting up Neaumaier addition functions to enhance floating point precision in the final digits during addition
-### This is needed for the function Power_series_Terms_Dirac to properly converge
-####################################################################################################################
+# ========== Neumaier compensated summation functions ==========
+# ========== Enhances floating-point precision for long accumulation loops ==========
 
 def Neaumaier_add(sum_, c, x):
     """
@@ -234,10 +235,11 @@ def Neaumaier_add(sum_, c, x):
     """
     t = sum_ + x
     if abs(sum_) >= abs(x):
-        c += (sum_ -t) + x
+        c += (sum_ - t) + x
     else:
-        c += (x-t) + sum_
-    return t , c
+        c += (x - t) + sum_
+    return t, c
+
 
 def Neaumaier_value(sum_, c):
     """
@@ -258,9 +260,7 @@ def Neaumaier_value(sum_, c):
     return sum_ + c
 
 
-##############################################################################################
-### Finding the power series terms for the initial mesh step [0,rb] in accordance with RADIAL
-##############################################################################################
+# ========== Power series terms for singular interval [0, r_b] ==========
 
 def singular_power_series_terms(u_array, r_b, l ,Z , kappa, sigma):
     """
@@ -525,26 +525,24 @@ def singular_power_series_terms(u_array, r_b, l ,Z , kappa, sigma):
 
 
 
-######################################################################################################
-### Finding the power series terms for the any mesh step [ra,rb] for ra !=0 in accordance with RADIAL
-######################################################################################################
+# ========== Power series terms for general interval [r_a, r_b] ==========
 
-def general_power_series_terms(u_array, initial_condition_a, initial_condition_b , r_a, r_b, l, kappa, sigma):
+def general_power_series_terms(u_array, initial_condition_a, initial_condition_b, r_a, r_b, l, kappa, sigma):
     """
-    Computes the power series coefficients An, Bn on regualr radial interval [r_a,r_b]
+    Computes the power series coefficients An, Bn on regular radial interval [r_a, r_b]
 
     Parameters
     ----------
     u_array : ndarray
-        Cubic spline coefficients of the potential (u0,u1,u2,u3).
+        Cubic spline coefficients of the potential (u0, u1, u2, u3).
     initial_condition_a : float
         Initial condition to assign to A0.
     initial_condition_b : float
-        # Initial condition to assign to B0.
+        Initial condition to assign to B0.
     r_a : float
-        Lower radial coordiante of the interval [r_a,r_b]
+        Lower radial coordinate of the interval [r_a, r_b]
     r_b : float
-        Upper radial coordinate of the interval [r_a,r_b].
+        Upper radial coordinate of the interval [r_a, r_b].
     l : int
         Orbital angular momentum quantum number.
     kappa : int
@@ -559,108 +557,134 @@ def general_power_series_terms(u_array, initial_condition_a, initial_condition_b
     arr_b : ndarray
         Array of power series coefficients Bn.
     end_point_P : float
-        # Calculated P(r_b) value.
+        Calculated P(r_b) value.
     end_point_Q : float
         Calculated Q(r_b) value.
 
     """
-    #Define the u terms
+    # ========== Define potential parameters ==========
     u0, u1, u2, u3 = u_array
     u_sum = u0 + u1 + u2 + u3
-    h = r_b-r_a
+    h = r_b - r_a
 
-    pre_factor = h/max(r_a,R0)
-    mult_term1 = u0 - 2.0*C*r_a
-    mult_term2 = u1 - 2.0*C*h
-    #create the a array and define the intial conditions
+    pre_factor = h / max(r_a, R0)
+    mult_term1 = u0 - 2.0 * C * r_a
+    mult_term2 = u1 - 2.0 * C * h
+
+    # ========== Initialize coefficient arrays ==========
     a = [initial_condition_a]
     b = [initial_condition_b]
 
-    a0 = a[0] ; b0 = b[0]
+    a0 = a[0]
+    b0 = b[0]
 
-    a1 = -pre_factor * (kappa*a0 + mult_term1*b0)
-    b1 = pre_factor * (kappa*b0 + u0*a0)
+    # ========== Calculate initial coefficients a1-a3, b1-b3 ==========
+    a1 = -pre_factor * (kappa * a0 + mult_term1 * b0)
+    b1 = pre_factor * (kappa * b0 + u0 * a0)
 
-    a2 = -pre_factor/2.0 * ((kappa + 1.0)*a1 + mult_term1*b1 + mult_term2*b0)
-    b2 = pre_factor/2.0 * ((kappa - 1.0)*b1 + u0*a1 + u1*a0)
+    a2 = -pre_factor / 2.0 * ((kappa + 1.0) * a1 + mult_term1 * b1 + mult_term2 * b0)
+    b2 = pre_factor / 2.0 * ((kappa - 1.0) * b1 + u0 * a1 + u1 * a0)
 
-    a3 = -pre_factor/3.0 * ((kappa + 2.0)*a2 + mult_term1*b2 + mult_term2*b1 + u2*b0)
-    b3 = pre_factor/3.0 * ((kappa - 2.0)*b2 + u0*a2 + u1*a1 + u2*a0)
+    a3 = -pre_factor / 3.0 * ((kappa + 2.0) * a2 + mult_term1 * b2 + mult_term2 * b1 + u2 * b0)
+    b3 = pre_factor / 3.0 * ((kappa - 2.0) * b2 + u0 * a2 + u1 * a1 + u2 * a0)
 
     a += [a1, a2, a3]
     b += [b1, b2, b3]
 
-    S_a , Sa_c = 0.0 , 0.0
-    S_b , Sb_c = 0.0 , 0.0
-    S_an , San_c = 0.0 , 0.0
-    S_bn , Sbn_c = 0.0 , 0.0
+    # ========== Initialize sum accumulators with Neumaier compensation ==========
+    S_a, Sa_c = 0.0, 0.0
+    S_b, Sb_c = 0.0, 0.0
+    S_an, San_c = 0.0, 0.0
+    S_bn, Sbn_c = 0.0, 0.0
 
-    for i , ax in enumerate(a):
+    # ========== Initial sum of coefficients ==========
+    for i, ax in enumerate(a):
         S_a, Sa_c = Neaumaier_add(S_a, Sa_c, ax)
-        if i >=1:
+        if i >= 1:
             S_an, San_c = Neaumaier_add(S_an, San_c, i * ax)
 
-
-    for i , bx in enumerate(b):
+    for i, bx in enumerate(b):
         S_b, Sb_c = Neaumaier_add(S_b, Sb_c, bx)
-        if i >=1:
+        if i >= 1:
             S_bn, Sbn_c = Neaumaier_add(S_bn, Sbn_c, i * bx)
 
-    n=3
+    # ========== Iterative recurrence relation ==========
+    n = 3
     tol_multiplier = 1.1
+
     while True:
-        n +=1
+        n += 1
         pf = pre_factor / n
 
-        a_part = (kappa - 1 + n) * a[n-1] + mult_term1 * b[n-1] + mult_term2 * b[n-2] + u2 * b[n-3] + u3 * b[n-4]
+        # Calculate recurrence for series coefficient An
+        a_part = (
+            (kappa - 1 + n) * a[n - 1]
+            + mult_term1 * b[n - 1]
+            + mult_term2 * b[n - 2]
+            + u2 * b[n - 3]
+            + u3 * b[n - 4]
+        )
         an = -pf * a_part
 
-        b_part = (kappa + 1 - n) * b[n-1] + u0 * a[n-1] + u1 * a[n-2] + u2 * a[n-3] + u3 * a[n-4]
+        # Calculate recurrence for series coefficient Bn
+        b_part = (
+            (kappa + 1 - n) * b[n - 1]
+            + u0 * a[n - 1]
+            + u1 * a[n - 2]
+            + u2 * a[n - 3]
+            + u3 * a[n - 4]
+        )
         bn = pf * b_part
 
-        a.append(an); b.append(bn)
+        a.append(an)
+        b.append(bn)
 
+        # Accumulate sums with Neumaier compensation
         S_a, Sa_c = Neaumaier_add(S_a, Sa_c, an)
         S_b, Sb_c = Neaumaier_add(S_b, Sb_c, bn)
         S_an, San_c = Neaumaier_add(S_an, San_c, n * an)
         S_bn, Sbn_c = Neaumaier_add(S_bn, Sbn_c, n * bn)
 
+        # Extract final sums with Neumaier correction
         S_a_val = Neaumaier_value(S_a, Sa_c)
         S_b_val = Neaumaier_value(S_b, Sb_c)
         S_an_val = Neaumaier_value(S_an, San_c)
         S_bn_val = Neaumaier_value(S_bn, Sbn_c)
 
+        # ========== Convergence check ==========
+        tolerance = EPSILON * max(
+            abs(S_a_val), abs(S_b_val), abs(S_an_val) / n, abs(S_bn_val) / n
+        )
 
-        tolerance = EPSILON * max(abs(S_a_val), abs(S_b_val), abs(S_an_val)/n, abs(S_bn_val)/n)
-        if max(abs(an) , abs(bn)) < tolerance:
+        if max(abs(an), abs(bn)) < tolerance:
+            # Verify system of equations
             t1 = r_b * S_an_val
-            t2 = -sigma*abs(kappa)*h*S_a_val
-            t3 = (u_sum - 2*C*r_b) * h * S_b_val
+            t2 = -sigma * abs(kappa) * h * S_a_val
+            t3 = (u_sum - 2 * C * r_b) * h * S_b_val
             condition1 = t1 + t2 + t3
-            scale1 = abs(t1) + abs(t2) + abs(t3)
 
-            t4 = r_b*S_bn_val
-            t5 = sigma*abs(kappa)*h*S_b_val
-            t6 = - u_sum*h*S_a_val
+            t4 = r_b * S_bn_val
+            t5 = sigma * abs(kappa) * h * S_b_val
+            t6 = -u_sum * h * S_a_val
             condition2 = t4 + t5 + t6
-            scale2 = abs(t4) + abs(t5) + abs(t6)
 
-
-            # tol_res = EPSILON * max(scale1, scale2, 1.0)
+            # Evaluate tolerance for system equations
             tol_res = EPSILON * max(abs(S_a_val), abs(S_b_val))
             if n > 20:
                 tol_res *= tol_multiplier
                 tol_multiplier += 0.05
-            if max(abs(condition1) , abs(condition2)) < tol_res:
-                if tol_multiplier > 1.1:
-                    print(f"For recurance series to converge in range [{r_a}, {r_b}],the tolerance is scaled by x{tol_multiplier:.2f}")
+          
+
+            if max(abs(condition1), abs(condition2)) < tol_res:
                 break
 
+        # ========== Divergence check ==========
         if n > 499:
-            raise RuntimeError(f"No convergence before n = {n}, {max(abs(condition1) , abs(condition2))} < {tol_res} not met")
+            raise RuntimeError(f"No convergence before n = {n}")
 
-    arr_a = np.array([float(x) for x in a], dtype = float)
-    arr_b = np.array([float(x) for x in b], dtype = float)
+    # ========== Convert to numpy arrays ==========
+    arr_a = np.array([float(x) for x in a], dtype=float)
+    arr_b = np.array([float(x) for x in b], dtype=float)
 
     end_point_P = Neaumaier_value(S_a, Sa_c)
     end_point_Q = Neaumaier_value(S_b, Sb_c)
@@ -670,27 +694,24 @@ def general_power_series_terms(u_array, initial_condition_a, initial_condition_b
 
 
 
-#################################################################################################
-### Calc_Series_Terms function calls the Potential_Parameter and Power_series_Terms functions to
-###calculate and stich toghether all the terms needed to solve the power series
-#################################################################################################
+# ========== Assemble series coefficients from all intervals ==========
 
-def calc_series_terms(grid_points, l, T, Z, kappa, sigma, R_au, derivatives, potential_index, phi_r, ratio_max = 0.05, max_subdiv = 200):
+def calc_series_terms(grid_points, l, T, Z, kappa, sigma, R_au, derivatives, potential_index, phi_r, ratio_max=0.05, max_subdiv=200):
     """
     Compute power-series coefficients over the full radial grid
 
     The singular interval near the origin [0,r_b], is first solved using 'singular_power_series_terms',
-    which generates the intiial recurrence coefficients A_n and B_n toghether with the corresponding
+    which generates the initial recurrence coefficients A_n and B_n together with the corresponding
     endpoint values of the radial wave function P(r) and Q(r) on the local interval [0,r_b]
 
-    For each subsequent grid interval [r_a,r_b], local recurrence coefficients are computes using
+    For each subsequent grid interval [r_a,r_b], local recurrence coefficients are computed using
     'general_power_series_terms'. The endpoints values P(r_b) and Q(r_b) from the previous interval
-    are used as the initial conditions for the next interval, ensuring continuity of the raidial solution
+    are used as the initial conditions for the next interval, ensuring continuity of the radial solution
     across the full grid
 
-    if the interval size ratio (h / r_a) exceeds 'ratio_max', the interval is subdived into smaller subintervals
+    If the interval size ratio (h / r_a) exceeds 'ratio_max', the interval is subdivided into smaller subintervals
     before computing the local series expansion. The final output consists of all local coefficient sets A_n and
-    B_n stiched oer the complete radial range [0,r]
+    B_n stitched over the complete radial range [0,r]
 
     Parameters
     ----------
@@ -709,7 +730,7 @@ def calc_series_terms(grid_points, l, T, Z, kappa, sigma, R_au, derivatives, pot
     R_au : float
         Nuclear radius in Atomic units, defined by R = 1.2e-15 * A^(1/3)/ AU.
     derivatives : list
-        List made of zero, first, second and thrid order derivatives of the cubic splined potential.
+        List made of zero, first, second and third order derivatives of the cubic splined potential.
     potential_index: int
         Index specifying which potential model to use.
     phi_r : callable
@@ -717,7 +738,7 @@ def calc_series_terms(grid_points, l, T, Z, kappa, sigma, R_au, derivatives, pot
     ratio_max : float
         Maximum ratio to compare to h/r_a.
     max_subdiv : int
-        Maximum amount of times a mesh [r_a,r_b] can be subdived into smaller meshes.
+        Maximum amount of times a mesh [r_a,r_b] can be subdivided into smaller meshes.
 
     Returns
     -------
@@ -727,11 +748,16 @@ def calc_series_terms(grid_points, l, T, Z, kappa, sigma, R_au, derivatives, pot
         List of all power series coefficients Bn over range (0,r)
 
     """
-
-    # cnf["Z"]
-    #### l = cnf["angular_momentum_l"]
-    u_parameters0 = singular_potential_parameters(grid_points[1], T, Z, R_au, potential_index, phi_r)
-    Series_terms0a , Series_terms0b , initial_condition0a, initial_condition0b = singular_power_series_terms(u_parameters0 ,grid_points[1] ,l ,Z ,kappa ,sigma)
+    # ========== Compute singular interval [0, r_b] ==========
+    u_parameters0 = singular_potential_parameters(
+        grid_points[1], T, Z, R_au, potential_index, phi_r
+    )
+    (
+        Series_terms0a,
+        Series_terms0b,
+        initial_condition0a,
+        initial_condition0b,
+    ) = singular_power_series_terms(u_parameters0, grid_points[1], l, Z, kappa, sigma)
 
     initial_temp_condition_a = initial_condition0a
     initial_temp_condition_b = initial_condition0b
@@ -739,35 +765,65 @@ def calc_series_terms(grid_points, l, T, Z, kappa, sigma, R_au, derivatives, pot
     Series_terms_list_a = [Series_terms0a]
     Series_terms_list_b = [Series_terms0b]
 
-    for i in range(1, len(grid_points)-1):
+    # ========== Compute general intervals [r_a, r_b] with subdivision if needed ==========
+    for i in range(1, len(grid_points) - 1):
         r_a = grid_points[i]
-        r_b = grid_points[i+1]
+        r_b = grid_points[i + 1]
 
         h = r_b - r_a
-        ratio = h/ r_a
+        ratio = h / r_a
 
         if ratio > ratio_max:
-            m = int(np.ceil(ratio/ratio_max))
+            # Subdivide interval if ratio too large
+            m = int(np.ceil(ratio / ratio_max))
             m = min(m, max_subdiv)
 
-            sub_grid = np.linspace(r_a, r_b , m+1)
+            sub_grid = np.linspace(r_a, r_b, m + 1)
 
             for j in range(m):
                 ra = float(sub_grid[j])
-                rb = float(sub_grid[j+1])
+                rb = float(sub_grid[j + 1])
 
                 u_temp_parameter = general_potential_parameters(ra, rb, l, T, derivatives)
 
-                Temp_series_terms_a,Temp_series_terms_b, initial_temp_condition_a, initial_temp_condition_b = general_power_series_terms(u_temp_parameter, initial_temp_condition_a, initial_temp_condition_b, ra , rb, l, kappa, sigma)
+                (
+                    Temp_series_terms_a,
+                    Temp_series_terms_b,
+                    initial_temp_condition_a,
+                    initial_temp_condition_b,
+                ) = general_power_series_terms(
+                    u_temp_parameter,
+                    initial_temp_condition_a,
+                    initial_temp_condition_b,
+                    ra,
+                    rb,
+                    l,
+                    kappa,
+                    sigma,
+                )
 
                 if rb == r_b:
                     Series_terms_list_a.append(Temp_series_terms_a)
                     Series_terms_list_b.append(Temp_series_terms_b)
         else:
+            # Process interval without subdivision
+            u_temp_parameter = general_potential_parameters(r_a, r_b, l, T, derivatives)
 
-            u_temp_parameter = general_potential_parameters(r_a, r_b,l, T, derivatives)
-
-            Temp_series_terms_a, Temp_series_terms_b, initial_temp_condition_a, initial_temp_condition_b = general_power_series_terms(u_temp_parameter, initial_temp_condition_a, initial_temp_condition_b, r_a , r_b, l, kappa, sigma)
+            (
+                Temp_series_terms_a,
+                Temp_series_terms_b,
+                initial_temp_condition_a,
+                initial_temp_condition_b,
+            ) = general_power_series_terms(
+                u_temp_parameter,
+                initial_temp_condition_a,
+                initial_temp_condition_b,
+                r_a,
+                r_b,
+                l,
+                kappa,
+                sigma,
+            )
 
             Series_terms_list_a.append(Temp_series_terms_a)
             Series_terms_list_b.append(Temp_series_terms_b)
@@ -775,16 +831,14 @@ def calc_series_terms(grid_points, l, T, Z, kappa, sigma, R_au, derivatives, pot
     return Series_terms_list_a, Series_terms_list_b
 
 
-######################################################################################################################################
-### Solve_Power_Series takes as input the list of power series terms to solve the total power series, returning the ouput in an array
-######################################################################################################################################
+# ========== Compute wavefunctions from power series coefficients ==========
 
 def solve_power_series(list_of_sequence_terms_a, list_of_sequence_terms_b, grid_points):
     """
     Calculates the wavefunctions P and Q on the entire range [0,r] by calculating all the local
     wavefunctions P and Q on each sub-interval [r_a,r_b] using the power series coefficients
-    An, Bn for P and Q respecivelty obtained through 'calc_series_terms' and stiching the resulting
-    wave functions toghether to obtain P(r) and Q(r) over the total range [0,r]
+    An, Bn for P and Q respectively obtained through 'calc_series_terms' and stitching the resulting
+    wave functions together to obtain P(r) and Q(r) over the total range [0,r]
 
     Parameters
     ----------
@@ -803,35 +857,35 @@ def solve_power_series(list_of_sequence_terms_a, list_of_sequence_terms_b, grid_
         Wavefunction values of Q(r)
     """
 
-    r_mesh = np.asarray(grid_points, dtype = float)
+    # ========== Initialize arrays ==========
+    r_mesh = np.asarray(grid_points, dtype=float)
     r_size = len(r_mesh)
 
-    P_array = np.zeros(r_size, dtype = float)
-    Q_array = np.zeros(r_size ,dtype = float)
+    P_array = np.zeros(r_size, dtype=float)
+    Q_array = np.zeros(r_size, dtype=float)
 
     P_array[0] = 0.0
     Q_array[0] = 0.0
 
-    a0 = np.asarray(list_of_sequence_terms_a[0], dtype = float)
-    b0 = np.asarray(list_of_sequence_terms_b[0], dtype = float)
+    # ========== Calculate wavefunction values at grid points ==========
+    a0 = np.asarray(list_of_sequence_terms_a[0], dtype=float)
+    b0 = np.asarray(list_of_sequence_terms_b[0], dtype=float)
 
-    # at x=1 [P(1) = (1)^s sum A_n (1)^n] & [Q(1) = (1)^(s+t) sum B_n (1)^n]
+    # At r=r_b for first interval: P(r_b) = sum A_n and Q(r_b) = sum B_n
     P_array[1] = float(np.sum(a0))
     Q_array[1] = float(np.sum(b0))
 
-    for i in range(1,r_size - 1):
-        ai = np.asarray(list_of_sequence_terms_a[i], dtype = float)
-        bi = np.asarray(list_of_sequence_terms_b[i], dtype = float)
+    # For remaining intervals
+    for i in range(1, r_size - 1):
+        ai = np.asarray(list_of_sequence_terms_a[i], dtype=float)
+        bi = np.asarray(list_of_sequence_terms_b[i], dtype=float)
 
-        P_array[i+1] = float(np.sum(ai))
-        Q_array[i+1] = float(np.sum(bi))
+        P_array[i + 1] = float(np.sum(ai))
+        Q_array[i + 1] = float(np.sum(bi))
 
     return P_array, Q_array
 
-###########################################################################################
-### Normalization_Constant function finds the normalization constant and phase shift delta
-### of wave functions by matching them at rc with their assymptotic behavior
-###########################################################################################
+# ========== Calculate normalization constant and phase shift ==========
 
 def Normalization_Constant(grid_points, idx_rc, P_array, Q_array, Analytic_normalization_const, T, k, eta, W, kappa, Z, Lambda, sigma, R_au, potential_index, phi_r):
     """
@@ -970,9 +1024,7 @@ def Normalization_Constant(grid_points, idx_rc, P_array, Q_array, Analytic_norma
 
 
 
-#######################################################################################################################
-### Analytic function solves the analytic coulomb wave functions P and Q using mp.math CoulombF and Coulombg functions
-#######################################################################################################################
+# ========== Solve for analytic Coulomb wavefunctions ==========
 
 def Analytic(Z,eta, k, W, kappa, Lambda, Analytic_normalization_const, T, delta, N_points, rc):
     """
@@ -1070,12 +1122,9 @@ def Analytic(Z,eta, k, W, kappa, Lambda, Analytic_normalization_const, T, delta,
 
     return r,P, Q
 
-#################################################################################################################
-### Visualize function plots the wavefuncs P and Q for the given potential against the analytic coulomb potential
-#################################################################################################################
+# ========== Visualization of wavefunctions ==========
 
 def Visualize(config,cnf):
-
     ### DECLARE PARAMETERS
     A = cnf["A"]
     Zf = cnf["Z"]
@@ -1271,13 +1320,9 @@ def Generate_Fermi_Data(config,cnf):
         r_arr = np.asarray(mesh_points, dtype = float)
         T_arr = np.asarray(T_range, dtype = float)
 
-        filename = f"{config["isotope"]}_potential_{potential_index}_kappa_{kappa:+d}_Z{Zf}_A{A}.npz"
+        filename = f"{config['isotope']}_potential_{potential_index}_kappa_{kappa:+d}_Z{Zf}_A{A}.npz"
 
-        if config["paths"]["output_directory"] is None:
-            main_output_directory = Path("Dirac_"+config["isotope"])
-        else:
-            main_output_directory = Path(config["paths"]["output_directory"])
-
+        main_output_directory = Path(config["paths"]["output_directory"]) / f"Dirac_{config['isotope']}"
         NPZ_output_directory = main_output_directory / "NPZ_files"
         NPZ_output_directory.mkdir(parents=True, exist_ok=True)
         file_path = NPZ_output_directory / filename

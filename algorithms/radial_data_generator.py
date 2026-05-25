@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+from logging import config
 from sys import prefix
 from matplotlib.gridspec import GridSpec
 import numpy as np
@@ -353,7 +354,7 @@ def Fermi(Ee, Z, A, rN):
 
     secondorder_corr = -(p * rN)**2 * (1-gamma0)/(1+gamma0) * (-2*(1+gamma0)* (5 + 4*gamma0) + (1 + 6*gamma0 + 4*gamma0**2)*(p/Ee)**2)/((1 + 2*gamma0) * p/Ee)**2
 
-    return F * (1 -firstorder_corr - secondorder_corr)
+    return F# * (1 -firstorder_corr - secondorder_corr)
 
 
 
@@ -455,35 +456,76 @@ def plot_f_and_g(Ee, potential_index, cnf, data, output_directory_name):
 
 
 
-    plt.figure(figsize=(12,8))
-    plt.plot(Ee-ME, abs(f_numeric), label = "f numeric")
     if f_analytic is not None:
-        plt.plot(Ee-ME, f_analytic, label = "f analytic")
-    plt.xlabel(r"$T$ (Mev)")
-    plt.ylabel(r"$f_{\kappa=1}(R)$")
-    plt.xlim((Ee-ME)[0], (Ee-ME)[-1])
-    plt.xscale("log")
-    plt.ylim(0, 4)
-    plt.title(f"f wave func comparison, Scheme {scheme} ")
-    plt.legend()
-    plt.savefig(os.path.join(output_directory_name, f"f_comparison_scheme_{scheme}.png"), dpi = 300)
-    plt.show()
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12,8), sharex=True, gridspec_kw={"height_ratios": [3,1]})
+        ax1.plot(Ee-ME, abs(f_numeric), lw=1.5, label = "f numeric")
+        ax1.plot(Ee-ME, f_analytic, lw=1.5, label = "f analytic")
+        ax1.set_ylabel(r"$f_{\kappa=1}(R)$")
+        ax1.set_ylim(0, 4)
+        ax1.set_title(f"f wave func comparison, Scheme {scheme}")
+        ax1.legend()
+        ax1.grid(True)
+        
+        percent_diff_f = 100.0 * (abs(f_numeric) - f_analytic) / f_analytic
+        ax2.plot(Ee-ME, percent_diff_f, lw=1.5)
+        ax2.set_xlabel(r"$T$ (MeV)")
+        ax2.set_ylabel("% diff")
+        ax2.grid(True)
+        
+        ax1.set_xscale("log")
+        plt.tight_layout()
+        plt.savefig(os.path.join(output_directory_name, f"f_comparison_scheme_{scheme}.png"), dpi = 300)
+        plt.show()
+    else:
+        fig = plt.figure(figsize=(12,8))
+        plt.plot(Ee-ME, abs(f_numeric), lw=1.5, label = "f numeric")
+        plt.xlabel(r"$T$ (MeV)")
+        plt.ylabel(r"$f_{\kappa=1}(R)$")
+        plt.xlim((Ee-ME)[0], (Ee-ME)[-1])
+        plt.xscale("log")
+        plt.ylim(0, 4)
+        plt.title(f"f wave func comparison, Scheme {scheme}")
+        plt.legend()
+        plt.grid(True)
+        plt.savefig(os.path.join(output_directory_name, f"f_comparison_scheme_{scheme}.png"), dpi = 300)
+        plt.show()
 
 
-    plt.figure(figsize=(12,8))
-    plt.plot(E_fortran, abs(g_fortran), label = "g Fortrant")
-    plt.plot(Ee-ME, abs(g_numeric), label = "g numeric")
     if g_analytic is not None:
-        plt.plot(Ee-ME, g_analytic, label = "g analytic")
-    plt.xlabel(r"$T$ (Mev)")
-    plt.ylabel(r"$g_{\kappa=-1}(R)$")
-    plt.xlim((Ee-ME)[0], (Ee-ME)[-1])
-    plt.xscale("log")
-    plt.ylim(0, 20)
-    plt.title(f"g wave func comparison, Scheme {scheme} ")
-    plt.legend()
-    plt.savefig(os.path.join(output_directory_name, f"g_comparison_scheme_{scheme}.png"), dpi = 300)
-    plt.show()
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12,8), sharex=True, gridspec_kw={"height_ratios": [3,1]})
+        ax1.plot(E_fortran, abs(g_fortran), lw=1.5, label = "g Fortran")
+        ax1.plot(Ee-ME, abs(g_numeric), lw=1.5, label = "g numeric")
+        ax1.plot(Ee-ME, g_analytic, lw=1.5, label = "g analytic")
+        ax1.set_ylabel(r"$g_{\kappa=-1}(R)$")
+        ax1.set_ylim(0, 20)
+        ax1.set_title(f"g wave func comparison, Scheme {scheme}")
+        ax1.legend()
+        ax1.grid(True)
+        
+        percent_diff_g = 100.0 * (abs(g_numeric) - g_analytic) / g_analytic
+        ax2.plot(Ee-ME, percent_diff_g, lw=1.5)
+        ax2.set_xlabel(r"$T$ (MeV)")
+        ax2.set_ylabel("% diff")
+        ax2.grid(True)
+        
+        ax1.set_xscale("log")
+        plt.tight_layout()
+        plt.savefig(os.path.join(output_directory_name, f"g_comparison_scheme_{scheme}.png"), dpi = 300)
+        plt.show()
+    else:
+        fig = plt.figure(figsize=(12,8))
+        plt.plot(E_fortran, abs(g_fortran), lw=1.5, label = "g Fortran")
+        plt.plot(Ee-ME, abs(g_numeric), lw=1.5, label = "g numeric")
+        plt.xlabel(r"$T$ (MeV)")
+        plt.ylabel(r"$g_{\kappa=-1}(R)$")
+        plt.xlim((Ee-ME)[0], (Ee-ME)[-1])
+        plt.xscale("log")
+        plt.ylim(0, 20)
+        plt.title(f"g wave func comparison, Scheme {scheme}")
+        plt.legend()
+        plt.grid(True)
+        plt.savefig(os.path.join(output_directory_name, f"g_comparison_scheme_{scheme}.png"), dpi = 300)
+        plt.show()
 
     return None
 
@@ -796,12 +838,18 @@ def Calc_double_beta_decay_spectrum(config,cnf):
 
     potential_index = config["generator"]["potential_index"]
 
+    # if config["paths"]["output_directory"] is None:
+    #     main_output_directory = Path("Dirac_" + config["isotope"])
+    # else:
+    #     main_output_directory = Path(config["paths"]["output_directory"])
 
-    directory_name = Path("Dirac_" + config["isotope"])/ "NPZ_files"
-    file_name_kappa_p = f"{config["isotope"]}_potential_{potential_index}_kappa_+1_Z{Z:}_A{A}.npz"
-    file_name_kappa_n = f"{config["isotope"]}_potential_{potential_index}_kappa_-1_Z{Z:}_A{A}.npz"
+    main_output_directory = Path(config["paths"]["output_directory"]) / f"Dirac_{config['isotope']}"
+    directory_name = main_output_directory/ "NPZ_files"
+    file_name_kappa_p = f"{config['isotope']}_potential_{potential_index}_kappa_+1_Z{Z:}_A{A}.npz"
+    file_name_kappa_n = f"{config['isotope']}_potential_{potential_index}_kappa_-1_Z{Z:}_A{A}.npz"
 
-    main_output_directory = Path("Dirac_" + config["isotope"])
+    
+
     results_output_directory = main_output_directory/ "phase_space_results"
 
     results_output_directory.mkdir(parents = True, exist_ok = True)
@@ -897,10 +945,6 @@ def Calc_double_beta_decay_spectrum(config,cnf):
     H_errors_num = np.asarray(H_errors_num_list)
 
 
-    Glit = [1.793e-18, 5.516e-19, 2.110e-19, 4.994e-20]  # literature: G0, G2, G4, G22
-    Glit = np.asarray(Glit)
-
-
     halflife = 1/(GA ** 4 * MGT1**2 * (G_results[0] + xi31 * G_results[1] + 1/3 * xi31 ** 2 * G_results[3] + (1/3 * xi31**2 + xi51)* G_results[2]))
     halflife_num = 1/(GA ** 4 * MGT1**2 * (G_results_num[0] + xi31 * G_results_num[1] + 1/3 * xi31 ** 2 * G_results_num[3] + (1/3 * xi31**2 + xi51)* G_results_num[2]))
 
@@ -941,7 +985,7 @@ def Calc_double_beta_decay_spectrum(config,cnf):
     plt.figure(figsize=(12,8))
     plt.plot(eps_grid, spec_vals_norm, lw = 1.5, label = "analytic")
     plt.plot(eps_grid, spec_val_norm_num, lw = 1.5, label = "numeric")
-    plt.xlabel('epsilon = Ee1 + Ee2 − 2 me (MeV)')
+    plt.xlabel('epsilon = Ee1 + Ee2 - 2 me (MeV)')
     plt.ylabel('1/Γ dΓ/dε')
     plt.legend()
     plt.title("Normalized 2νββ Spectrum")
@@ -951,6 +995,10 @@ def Calc_double_beta_decay_spectrum(config,cnf):
     norm_check = np.trapezoid(spec_vals_norm, eps_grid)
     norm_check_num = np.trapezoid(spec_val_norm_num, eps_grid)
     print(f"analytic norm check: {norm_check:.10g}, numeric norm check: {norm_check_num:.10g}")
+
+
+    Simkovic_Gs = cnf["Simkovic_Gs"] # G0, G2, G4, G22 from Simkovic et al. 2013
+    Simkovic_Hs = cnf["Simkovic_Hs"] # H0, H2, H4, H22 from Simkovic et al. 2013
 
     with open(results_output_path, "w") as f:
         scheme = None
@@ -963,9 +1011,13 @@ def Calc_double_beta_decay_spectrum(config,cnf):
 
         f.write(f"### Double Beta Decay Results for {config["isotope"]} using Scheme {scheme} ###\n\n")
 
-        f.write(f"G analytic converted to 1/yr units [G0, G2, G4, G22]:  {G_results} \n") #### Get rid of this, as it only shows Pure coulomb fermi G values
-        f.write(f"G numerical converted to 1/yr units [G0, G2, G4, G22]: {G_results_num} \n")
-        f.write(f"H numerical ----------------------->[H0, H2, H4, H22]: {H_result_num}\n\n")
+
+        f.write(f"G numerical converted to 1/yr units  [G0, G2, G4, G22]: {G_results_num} \n")
+        f.write(f"G Simkovic results ----------------> [G0, G2, G4, G22]: {Simkovic_Gs} \n")
+        f.write(f"delta G numerical vs Simkovic:                          {100.0 * (G_results_num - Simkovic_Gs)/Simkovic_Gs} % \n\n")
+        f.write(f"H numerical -----------------------> [H0, H2, H4, H22]: {H_result_num}\n")
+        f.write(f"H Simkovic results ----------------> [H0, H2, H4, H22]: {Simkovic_Hs} \n")
+        f.write(f"delta H numerical vs Simkovic:                          {100.0 * (H_result_num - Simkovic_Hs)/Simkovic_Hs} % \n\n")
 
         f.write(f"Calculated analytic half life: {halflife: .6e} \n")
         f.write(f"Calculated numeric half life:  {halflife_num: .6e} \n")
