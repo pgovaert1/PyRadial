@@ -10,8 +10,6 @@ from algorithms.radial_data_handler import calc_double_beta_decay_spectrum
 from configurations.isotopes import ISOTOPES
 
 
-
-
 def positive_float(value):
     val = float(value)
     if val < 0:
@@ -61,6 +59,13 @@ def main():
     # Isotope selection
     parser.add_argument("--isotope", type = str, choices = ["Xe136", "Mo100", "Nd150"], help = f"select an isotope from the isotopes.py file for which to run the scripts, (default from config: { config["isotope"]})")
 
+    # Plot selection (data mode only)
+    _ALL_PLOTS = ["gf", "fermi", "epsilon", "double_diff"]
+    parser.add_argument("--plots", nargs="*", choices=_ALL_PLOTS, metavar="PLOT",
+        help=f"Which plots/computations to run in 'data' mode. "
+             f"Choices: {_ALL_PLOTS}. "
+             f"Omit flag to run all; pass '--plots' with no arguments to run none (G/H factors and half-life are always computed).")
+
 
     args = parser.parse_args()
 
@@ -107,9 +112,12 @@ def main():
         config["mesh_grid"]["upper_limit_step_size"] = args.DRN
 
 
-    # Istopte override
+    # Isotope override
     if args.isotope is not None:
         config["isotope"] = args.isotope
+
+    # Plots override: None means flag was not passed → run all
+    config["plots"] = args.plots if args.plots is not None else _ALL_PLOTS
 
 
 
@@ -147,20 +155,31 @@ def main():
     iso = config["isotope"]
     isotope_data = ISOTOPES[iso]
 
+    # Validate that nuclear matrix elements are available for this isotope
+    if "nuclear_matrix_elements" not in isotope_data:
+        raise ValueError(
+            f"Nuclear matrix elements are not defined for isotope '{iso}'. "
+            f"Please add nuclear_matrix_elements to isotopes.py for this isotope."
+        )
+
+    # Map potential_index to scheme letter for G/H reference value lookup
+    _SCHEME_MAP = {0: "B", 2: "A", 3: "C"}
+    scheme = _SCHEME_MAP.get(potential)
 
     # write a smaller config file needed for Dira_numer_radial.py
     cnf ={
         "Z": isotope_data["Z"],
         "A": isotope_data["A"],
         "Q": isotope_data["Q"],
-        "Simkovic_Gs": isotope_data["G_values"],
-        "Simkovic_Hs": isotope_data["H_values"],
+        "Simkovic_Gs": isotope_data["G_values"].get(scheme) if scheme else None,
+        "Simkovic_Hs": isotope_data["H_values"].get(scheme) if scheme else None,
+        "nuclear_matrix_elements": isotope_data["nuclear_matrix_elements"],
 
         "angular_momentum_l": config["parameters"]["angular_momentum_l"],
         "kappa": config["parameters"]["kappa"]
         }
 
-
+    
     if mode == "generate":
         print_potential(potential)
         print(f"Saving output in \\{config["paths"]["output_directory"]} directory")
@@ -174,7 +193,7 @@ def main():
     elif mode == None:
         iso = config["isotope"]
         model = config["nuclear_model"]
-        iso_data = ISOTOPES[iso]
+        
 
 
 
