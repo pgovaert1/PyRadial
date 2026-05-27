@@ -3,6 +3,7 @@
 *.txt
 *-swp
 # Ignore directories
+CLAUDE.md
 out*
 out_fortran/
 plots/

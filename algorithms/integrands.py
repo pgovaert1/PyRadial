@@ -2,14 +2,20 @@
 
 import numpy as np
 from scipy.integrate import quad
-from scipy.constants import physical_constants
 from configurations.physics_constants import ME, ALPHA, GF, VUD, HBAR_C, GA, AU, C, E_HARTREE
+
+# ============================================================================
+# Constants
+# ============================================================================
 
 Gbeta = GF * VUD # Effective weak coupling constant in MeV^-2
 c2n = ME * (Gbeta * ME ** 2)**4 / (8 * np.pi**7)
 MeVtoyr = (365.25 * 24 * 3600) * 2.998e8 / (1e-15 * HBAR_C)
-MGT1, MGT3, MGT5, xi31, xi51 = 0.0104, 0.00403, 0.00126, 0.3867, 0.1207 # Simkovic NMEs for 136Xe
 
+
+# ============================================================================
+# Helper Functions
+# ============================================================================
 
 def electron_momentum(E):
     """
@@ -68,7 +74,11 @@ def phase_space_polynomial(tag, x, y):
         raise ValueError(f"Unknowown tag: {tag}")
 
 
-def two_electron_integrand(Ee1, Ee2, Q_value, tag, fermi_func):
+# ============================================================================
+# Energy Spectrum - Standard Two-Electron Phase Space Integration
+# ============================================================================
+
+def two_electron_kernel(Ee1, Ee2, Q_value, tag, fermi_func, nuclear_matrix_elements):
     """
     Evaluate the two-electron phase-space integrand.
 
@@ -111,13 +121,24 @@ def two_electron_integrand(Ee1, Ee2, Q_value, tag, fermi_func):
     neutrino_energy_sum = Q_value + 2*ME - Ee1 - Ee2
     energy_assymetry = Ee1 - Ee2
 
-    polynomail = phase_space_polynomial(tag, neutrino_energy_sum, energy_assymetry)
-
+    xi31, xi51 = nuclear_matrix_elements["xi31"], nuclear_matrix_elements["xi51"]
     pre_factor = MeVtoyr * c2n / (ME**11 * np.log(2))
-    return float(pre_factor * F1 * F2 * p1 * Ee1 * p2 * Ee2 * polynomail)
+    if tag is not None:
+        polynomial = phase_space_polynomial(tag, neutrino_energy_sum, energy_assymetry)
+        return float(pre_factor * F1 * F2 * p1 * Ee1 * p2 * Ee2 * polynomial)
+    elif tag is None:
+        I_0 = phase_space_polynomial(0, neutrino_energy_sum, energy_assymetry)
+        I_2 = phase_space_polynomial(2, neutrino_energy_sum, energy_assymetry)
+        I_4 = phase_space_polynomial(4, neutrino_energy_sum, energy_assymetry)
+        I_22 = phase_space_polynomial(22, neutrino_energy_sum, energy_assymetry)
+        polynomial_term = (I_0 + xi31 * I_2 + 1/3 * xi31**2 * I_22 + (1/3 * xi31**2 + xi51) * I_4)
+        return float(pre_factor * F1 * F2 * p1 * Ee1 * p2 * Ee2 * polynomial_term)
 
 
-def phase_space_integrand(tag, Q_value, fermi_func):
+    
+
+
+def two_electron_spectrum_integrand(tag, Q_value, fermi_func, nuclear_matrix_elements):
     """
     Construct a two-dimensional phase-space integrand function.
 
@@ -129,14 +150,66 @@ def phase_space_integrand(tag, Q_value, fermi_func):
         Q-value of the decay process.
     fermi_func : callable
         Function returning the Fermi correction factor.
+    nuclear_matrix_elements : dict
+        Nuclear matrix elements for the selected isotope.
 
     Returns
     -------
     callable
         Function of the form f(Ee2, Ee1).
     """
-    return lambda Ee2, Ee1: two_electron_integrand(Ee1, Ee2, Q_value, tag, fermi_func)
+    return lambda Ee2, Ee1: two_electron_kernel(Ee1, Ee2, Q_value, tag, fermi_func, nuclear_matrix_elements)
 
+
+def angular_correlation_distribution(Ee1, Ee2, Q_value, fermi_func, E_func, nuclear_matrix_elements):
+    '''
+    Compute the angular correlation distribution for given electron energies.
+
+    Parameters
+    ----------
+    Ee1 : float
+        Total energy of the first electron.
+    Ee2 : float
+        Total energy of the second electron.
+    Q_value : float
+        Q-value of the decay process.
+    fermi_func : callable
+        Function returning the Fermi function value for a given electron energy.
+    E_func : callable
+        Function returning the energy-dependent correction factor for a given electron energy.  
+
+    Returns
+    -------
+    float
+        Value of the angular correlation distribution. 
+    '''
+
+    a = Q_value + 2*ME - Ee1 - Ee2 # neutrino energy sum
+    b = Ee1 - Ee2 # energy asymmetry
+
+    I_tilde2 = 1/14 * 1/(2*ME)**2 *(a**2 + 7 * b**2)
+    I_tilde22 = 1/336 * 1/(2*ME)**4 * (a**4 - 6*a**2*b**2 + 21*b**4)
+    I_tilde4 = 1/168 * 1/(2*ME)**4 * (a**4 + 18*a**2*b**2 + 21*b**4)
+
+    xi31, xi51 = nuclear_matrix_elements["xi31"], nuclear_matrix_elements["xi51"]
+    E_function_numerator = E_func(Ee1) * E_func(Ee2)
+    F_function_denominator = fermi_func(Ee1) * fermi_func(Ee2)
+
+    pre_factor = - E_function_numerator / F_function_denominator
+
+    numerator =  (1 + xi31 * I_tilde2 + 5/9 * xi31**2 * I_tilde22 + (2/9 * xi31**2 + xi51) * I_tilde4)
+    denominator = (1 + xi31 * I_tilde2 + 1/3 * xi31**2 * I_tilde22 + (1/3 * xi31**2 + xi51) * I_tilde4)
+
+    return float(pre_factor * numerator / denominator) 
+
+    
+
+
+
+
+# ============================================================================
+# Epsilon Spectrum - Energy Sum and Asymmetry Variable Integration
+# ============================================================================
 
 def energies_eps_D(eps, D):
     """
@@ -160,7 +233,7 @@ def energies_eps_D(eps, D):
     Ee2 = ME - D + 0.5*eps
     return Ee1, Ee2
 
-def phase_combo(Q_minus_eps, D):
+def phase_combo(Q_minus_eps, D, nuclear_matrix_elements):
     """
     Compute the combined phase-space polynomial expansion.
 
@@ -177,6 +250,7 @@ def phase_combo(Q_minus_eps, D):
     float
         Weighted sum of phase-space polynomial contributions.
     """
+    xi31, xi51 = nuclear_matrix_elements["xi31"], nuclear_matrix_elements["xi51"]
     x = Q_minus_eps
     y = 2*D  # y = Ee1 - Ee2 = 2Δ
 
@@ -187,7 +261,7 @@ def phase_combo(Q_minus_eps, D):
 
     return A0 + A2*xi31 + A4*(xi31**2/3.0 + xi51) + A22*(xi31**2/3.0)
 
-def epsilon_spectrum_integrand(eps, D, Q_value, fermi_func):
+def epsilon_spectrum_kernel(eps, D, Q_value, fermi_func, nuclear_matrix_elements):
     """
     Evaluate the integrand of the epsilon spectrum distribution.
 
@@ -224,11 +298,12 @@ def epsilon_spectrum_integrand(eps, D, Q_value, fermi_func):
     F1 = fermi_func(Ee1)
     F2 = fermi_func(Ee2)
 
-    poly = phase_combo(Q_value - eps, D)
+    MGT1 = nuclear_matrix_elements["MGT1"]
+    poly = phase_combo(Q_value - eps, D, nuclear_matrix_elements)
     pre_factor = (GA ** 4 * MGT1**2 *MeVtoyr * c2n) / (ME**11)
     return float(pre_factor * F1 * F2 * p1 * Ee1 * p2 * Ee2 * poly)
 
-def spectrum_epsilon(eps, Q_value, fermi_func):
+def spectrum_epsilon_integrand(eps, Q_value, fermi_func, nuclear_matrix_elements):
     """
     Compute the epsilon spectrum by integrating over the asymmetry variable.
 
@@ -248,7 +323,7 @@ def spectrum_epsilon(eps, Q_value, fermi_func):
     """
     if not (0.0 <= eps <= Q_value):
                 return 0.0
-    value, _ = quad(lambda D: epsilon_spectrum_integrand(eps, D, Q_value, fermi_func),
+    value, _ = quad(lambda D: epsilon_spectrum_kernel(eps, D, Q_value, fermi_func, nuclear_matrix_elements),
                     -eps/2.0,
                     eps/2.0,
                     epsabs=1e-16,
@@ -256,3 +331,159 @@ def spectrum_epsilon(eps, Q_value, fermi_func):
                     limit=20000,
                     points=[-eps/2.0, 0.0, eps/2.0])
     return value
+
+
+
+def double_differential_spectrum_kernel(Ee1, Ee2, cos_theta, Q_value, fermi_func, E_func, nuclear_matrix_elements):
+    """
+    Compute the triple-differential spectrum dΓ/(dEe1 dEe2 d(cos θ)).
+    
+    This evaluates the angular-dependent spectrum using:
+        dΓ/(dEe1 dEe2 d(cos θ)) = (1/2) * dΓ/(dEe1 dEe2) * (1 + κ²ν * cos(θ))
+    
+    where:
+        - dΓ/(dEe1 dEe2) is the standard two-electron phase space factor
+        - κ²ν is the angular correlation coefficient (energy-dependent, only for numeric Fermi)
+        - cos(θ) is the angle between the two electrons
+    
+    Parameters
+    ----------
+    Ee1 : float
+        Total energy of the first electron (MeV).
+    Ee2 : float
+        Total energy of the second electron (MeV).
+    cos_theta : float
+        Cosine of the angle between electron momenta (-1 to +1).
+    Q_value : float
+        Q-value of the decay process (MeV).
+    fermi_func : callable
+        Function returning the Fermi correction factor F(Ee).
+        For this to work, it must be a wrapper that only takes Ee as input
+        (pre-bound with Z, A, and other necessary parameters).
+    E_func : callable
+        Function returning the energy correction factor E(Ee) = 2*g*f.
+        For numeric calculations, this is the Dirac wavefunction-based E function.
+        For analytic calculations, this can be a dummy function (returns 0).
+    
+    Returns
+    -------
+    float
+        Value of the triple-differential spectrum. Returns 0.0 for
+        kinematically forbidden configurations.
+    """
+    # ========== Step 1: Get base two-electron spectrum ==========
+    # Using tag=0 for leading-order phase space polynomial
+    base_spectrum = two_electron_kernel(Ee1, Ee2, Q_value, tag=None, fermi_func=fermi_func, nuclear_matrix_elements=nuclear_matrix_elements)
+    
+    # Early return if kinematically forbidden
+    if base_spectrum == 0.0:
+        return 0.0
+    
+    # ========== Step 2: Get angular correlation coefficient κ²ν ==========
+    # This coefficient describes how the spectrum varies with the relative angle
+    # between the two electron momenta. It's energy-dependent through the
+    # ratio E_func(Ee1)*E_func(Ee2) / (F(Ee1)*F(Ee2))
+    # 
+    # NOTE: This only has physical meaning when E_func is from Dirac wavefunctions.
+    # For analytic Fermi function, E_func will be a dummy that returns 0,
+    # resulting in kappa_2nu = 0 (isotropic distribution).
+    kappa_2nu = angular_correlation_distribution(Ee1, Ee2, Q_value, fermi_func, E_func, nuclear_matrix_elements)
+    
+    # ========== Step 3: Apply angular dependence ==========
+    # The (1/2) factor comes from normalizing d(cos θ) integral over [-1, +1]
+    # The (1 + κ²ν*cos(θ)) describes the anisotropic angular distribution
+    angular_factor = 0.5 * (1.0 + kappa_2nu * cos_theta)
+    
+    # ========== Step 4: Return final spectrum ==========
+    result = base_spectrum * angular_factor
+    return float(result)
+
+
+def triple_differential_spectrum_integrand_cos_theta(cos_theta, Ee1, Ee2, Q_value, fermi_func, E_func, nuclear_matrix_elements):
+    """
+    Integrand for d(cos θ) integration at fixed electron energies.
+    
+    This returns the triple-differential spectrum evaluated at a point,
+    suitable for integration over cos(θ) using quad.
+    
+    Parameters
+    ----------
+    cos_theta : float
+        Cosine of the angle between electron momenta (-1 to +1).
+    Ee1 : float
+        Total energy of the first electron (MeV).
+    Ee2 : float
+        Total energy of the second electron (MeV).
+    Q_value : float
+        Q-value of the decay process (MeV).
+    fermi_func : callable
+        Function returning the Fermi correction factor F(Z, Ee).
+    E_func : callable
+        Function returning the energy correction factor E(Ee) = 2*g*f.
+    
+    Returns
+    -------
+    float
+        Value of the integrand for cos(θ) integration.
+    """
+    return double_differential_spectrum_kernel(Ee1, Ee2, cos_theta, Q_value, fermi_func, E_func, nuclear_matrix_elements)
+
+
+def triple_differential_spectrum_integrand_ee2(Ee2, Ee1, cos_theta, Q_value, fermi_func, E_func, nuclear_matrix_elements):
+    """
+    Integrand for Ee2 integration at fixed Ee1 and cos(θ).
+    
+    This returns the triple-differential spectrum evaluated at a point,
+    suitable for integration over Ee2 using quad.
+    
+    Parameters
+    ----------
+    Ee2 : float
+        Total energy of the second electron (MeV).
+    Ee1 : float
+        Total energy of the first electron (MeV).
+    cos_theta : float
+        Cosine of the angle between electron momenta.
+    Q_value : float
+        Q-value of the decay process (MeV).
+    fermi_func : callable
+        Function returning the Fermi correction factor F(Z, Ee).
+    E_func : callable
+        Function returning the energy correction factor E(Ee) = 2*g*f.
+    
+    Returns
+    -------
+    float
+        Value of the integrand for Ee2 integration.
+    """
+    return double_differential_spectrum_kernel(Ee1, Ee2, cos_theta, Q_value, fermi_func, E_func, nuclear_matrix_elements)
+
+
+def triple_differential_spectrum_integrand_ee1(Ee1, Ee2, cos_theta, Q_value, fermi_func, E_func, nuclear_matrix_elements):
+    """
+    Integrand for Ee1 integration at fixed Ee2 and cos(θ).
+    
+    This returns the triple-differential spectrum evaluated at a point,
+    suitable for integration over Ee1 using quad.
+    
+    Parameters
+    ----------
+    Ee1 : float
+        Total energy of the first electron (MeV).
+    Ee2 : float
+        Total energy of the second electron (MeV).
+    cos_theta : float
+        Cosine of the angle between electron momenta.
+    Q_value : float
+        Q-value of the decay process (MeV).
+    fermi_func : callable
+        Function returning the Fermi correction factor F(Z, Ee).
+    E_func : callable
+        Function returning the energy correction factor E(Ee) = 2*g*f.
+    
+    Returns
+    -------
+    float
+        Value of the integrand for Ee1 integration.
+    """
+    return double_differential_spectrum_kernel(Ee1, Ee2, cos_theta, Q_value, fermi_func, E_func, nuclear_matrix_elements)
