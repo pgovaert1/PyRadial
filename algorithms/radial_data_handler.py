@@ -256,7 +256,7 @@ def calculate_and_plot_spectra(Q, Z, A, Fermi_analytic, Fermi_numeric, plots_out
 
 # ========== dGamma/dEe1dEe2dcos(θ) SPECTRUM CALCULATION AND PLOTTING ==========
 
-def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fermi_numeric, E_function_numeric, plots_output_directory, potential_index, nuclear_matrix_elements):
+def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fermi_numeric, E_function_numeric, plots_output_directory, potential_index, nuclear_matrix_elements, phase_space_data=None):
     """
     Calculate and plot the double-differential spectrum dΓ/dEe1dEe2 for 2νββ decay.
     
@@ -469,7 +469,55 @@ def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fer
     plt.tight_layout()
     plt.savefig(os.path.join(plots_output_directory, f"DoublesDiff_Spectrum_potential_{potential_index}_Z{Z}_A{A}.png"), dpi=300)
     plt.show()
-    
+
+    # ========== PLOT 1b: NORMALIZED BY Γ^{2ν} ==========
+    if phase_space_data is not None:
+        xi31 = nuclear_matrix_elements["xi31"]
+        xi51 = nuclear_matrix_elements["xi51"]
+
+        G = phase_space_data["G_results"]        # analytic; indices: 0=G0, 1=G2, 2=G4, 3=G22
+        G_num = phase_space_data["G_results_num"]
+
+        gamma_2nu_analytic = G[0] + xi31*G[1] + 1/3*xi31**2*G[3] + (1/3*xi31**2 + xi51)*G[2]
+        gamma_2nu_numeric  = G_num[0] + xi31*G_num[1] + 1/3*xi31**2*G_num[3] + (1/3*xi31**2 + xi51)*G_num[2]
+
+        spec_norm_analytic = spectrum_double_diff_analytic / gamma_2nu_analytic
+        spec_norm_numeric  = spectrum_double_diff_numeric  / gamma_2nu_numeric
+        spec_norm_direct   = spectrum_direct_numeric       / gamma_2nu_analytic
+
+        fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+        fig.suptitle(f'Normalized: dΓ/(dEe1 dEe2) / Γ^{{2ν}} — Potential {potential_index}', fontsize=14)
+
+        ax_a = axes[0]
+        contour_a = ax_a.contourf(Ee2_grid, Ee1_grid, spec_norm_analytic, levels=15, cmap='viridis')
+        ax_a.set_xlabel('Ee2 (MeV)')
+        ax_a.set_ylabel('Ee1 (MeV)')
+        ax_a.set_title('Analytic Fermi\n(Integrated over cos(θ))')
+        cbar_a = plt.colorbar(contour_a, ax=ax_a)
+        cbar_a.set_label('dΓ/(dEe1 dEe2) / Γ^{2ν}')
+
+        ax_n = axes[1]
+        contour_n = ax_n.contourf(Ee2_grid, Ee1_grid, spec_norm_numeric, levels=15, cmap='viridis')
+        ax_n.set_xlabel('Ee2 (MeV)')
+        ax_n.set_ylabel('Ee1 (MeV)')
+        ax_n.set_title('Numeric Fermi\n(Integrated over cos(θ))')
+        cbar_n = plt.colorbar(contour_n, ax=ax_n)
+        cbar_n.set_label('dΓ/(dEe1 dEe2) / Γ^{2ν}')
+
+        ax_d = axes[2]
+        contour_d = ax_d.contourf(Ee2_grid, Ee1_grid, spec_norm_direct, levels=15, cmap='viridis')
+        ax_d.set_xlabel('Ee2 (MeV)')
+        ax_d.set_ylabel('Ee1 (MeV)')
+        ax_d.set_title('Numeric Fermi\n(Direct two_electron_kernel)')
+        cbar_d = plt.colorbar(contour_d, ax=ax_d)
+        cbar_d.set_label('dΓ/(dEe1 dEe2) / Γ^{2ν}')
+
+        plt.tight_layout()
+        plt.savefig(os.path.join(plots_output_directory, f"DoublesDiff_Spectrum_Normalized_potential_{potential_index}_Z{Z}_A{A}.png"), dpi=300)
+        plt.show()
+    else:
+        print("Skipping normalized plot: phase_space_data not provided.")
+
     # ========== VERIFICATION: Compare integrated vs direct methods ==========
     print("\nVerification: Comparing integration and direct methods...")
     with np.errstate(divide='ignore', invalid='ignore'):
@@ -908,7 +956,7 @@ def calc_double_beta_decay_spectrum(config, cnf):
     # ========== CALCULATE AND PLOT TRIPLE-DIFFERENTIAL SPECTRUM ==========
     if "double_diff" in plots:
         calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fermi_numeric,
-                                                        E_numeric, plots_output_directory, potential_index, nuclear_matrix_elements)
+                                                        E_numeric, plots_output_directory, potential_index, nuclear_matrix_elements, phase_space_data)
 
     # ========== CALCULATE AND PLOT SPECTRA ==========
     spectrum_data = None
