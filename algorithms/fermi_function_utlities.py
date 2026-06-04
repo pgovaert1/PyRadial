@@ -5,7 +5,6 @@ import matplotlib.pyplot as plt
 import scipy.special as sp
 import mpmath as mp
 import os
-from pathlib import Path
 import glob, re
 from configurations.physics_constants import ME, ALPHA, HBAR_C, E_HARTREE, AU, C
 
@@ -165,7 +164,8 @@ def calc_g_and_f(Ee, Z, A, data):
 
     g_n1 = np.sqrt((Ee + ME)/(2*Ee)) * P_n[:,idx_R] /(p_au * mesh_point_R_au)
     f_p1 = np.sqrt((Ee + ME)/(2*Ee)) * Q_p[:,idx_R] / (p_au * mesh_point_R_au)
-
+    # g_n1 =  P_n[:,idx_R] #/(p_au * mesh_point_R_au)
+    # f_p1 =  Q_p[:,idx_R] #/ (p_au * mesh_point_R_au)
     return g_n1, f_p1
 
 
@@ -355,38 +355,55 @@ def plot_f_and_g(Ee, potential_index, cnf, data, output_directory_name):
     if potential_index == 0:
         scheme = "B"
 
-        out_g = np.empty_like(Ee, dtype = float)
-        out_f = np.empty_like(Ee, dtype = float)
+        g_analytic = np.empty_like(Ee, dtype = float)
+        f_analytic = np.empty_like(Ee, dtype = float)
 
         kappa_g = -1
         kappa_f = 1
 
+        #### SIMOKVIC ANALYTIC FORMULA
+        # for i , E in enumerate(Ee):
+        #     p = np.sqrt(E**2 - ME**2)
+        #     eta = ALPHA * Z* E/ p
+        #     gammak = np.sqrt(1 - (ALPHA * Z)**2)
 
-        for i , E in enumerate(Ee):
-            p = np.sqrt(E**2 - ME**2)
-            eta = ALPHA * Z* E/ p
-            gammak = np.sqrt(1 - (ALPHA * Z)**2)
+        #     numerator = np.abs(sp.gamma(1 + gammak + 1j * eta))
+        #     denominator = sp.gamma(1 + 2 * gammak)
+        #     gamma_ratio = numerator/denominator
 
-            numerator = np.abs(sp.gamma(1 + gammak + 1j * eta))
-            denominator = sp.gamma(1 + 2 * gammak)
-            gamma_ratio = numerator/denominator
+        #     sqrt_term_plus = np.sqrt((E + ME) / (2 * E))
+        #     sqrt_term_min = np.sqrt((E - ME) / (2 * E))
 
-            sqrt_term_plus = np.sqrt((E + ME) / (2 * E))
-            sqrt_term_min = np.sqrt((E - ME) / (2 * E))
-
-            exp_zeta_g = np.sqrt((kappa_g - 1j * eta * ME/E) / (gammak - 1j * eta))
-            exp_zeta_f = np.sqrt((kappa_f - 1j * eta * ME/E) / (gammak - 1j * eta))
+        #     exp_zeta_g = np.sqrt((kappa_g - 1j * eta * ME/E) / (gammak - 1j * eta))
+        #     exp_zeta_f = np.sqrt((kappa_f - 1j * eta * ME/E) / (gammak - 1j * eta))
 
 
-            hyp = mp.hyp1f1(gammak - 1j*eta, 1 + 2*gammak, -2*1j*p*rN)
-            Im_term = np.imag(np.exp(1j*p*rN) * exp_zeta_g * hyp )
-            Re_term = np.real(np.exp(1j*p*rN) * exp_zeta_f * hyp)
+        #     hyp = complex(mp.hyp1f1(gammak - 1j*eta, 1 + 2*gammak, -2*1j*p*rN))
+        #     phase = np.exp(1j*p*rN)
+        #     Im_term = np.imag(phase * exp_zeta_g * hyp )
+        #     Re_term = np.real(phase * exp_zeta_f * hyp)
 
-            out_g[i] = np.sign(kappa_g) * 1.0/(p*rN) * sqrt_term_plus * gamma_ratio * (2*p*rN)**gammak * np.exp(np.pi * eta/2) * Im_term
-            out_f[i] = np.sign(kappa_f) * 1.0/(p*rN) * sqrt_term_min * gamma_ratio * (2*p*rN)**gammak * np.exp(np.pi * eta/2) * Re_term
+        #     g_analytic[i] = np.sign(kappa_g) * 1.0/(p*rN) * sqrt_term_plus * gamma_ratio * (2*p*rN)**gammak * np.exp(np.pi * eta/2) * Im_term
+        #     f_analytic[i] = np.sign(kappa_f) * 1.0/(p*rN) * sqrt_term_min * gamma_ratio * (2*p*rN)**gammak * np.exp(np.pi * eta/2) * Re_term
 
-        g_analytic = out_g
-        f_analytic = out_f
+        #### SAAD ANALYTIC FORMULA
+        _alpha = mp.mpf('1') / mp.mpf(str(C))
+        _me = mp.mpf(str(ME))
+        _Z = mp.mpf(str(Z)) 
+
+        for i, E in enumerate(Ee):
+            W = mp.mpf(E)
+            p = mp.sqrt(W**2 - _me**2)
+            eta = _alpha * _Z * W / p
+            S = mp.sqrt(1 - (_alpha * _Z)**2) # kappa^2 hard coded to equal 1
+            nu = mp.arg(_alpha * _Z * (W + _me) - mp.mpc(0, 1) * (kappa_g + S) * p)
+            Ak = -1 * (mp.exp(-mp.pi * eta / 2) * mp.fabs(mp.gamma(S + mp.mpc(0, 1) * eta)) / mp.gamma(2 * S + 1) * (2 * p * rN)**S)
+            Fk = ((S - mp.mpc(0, 1) * eta) * mp.exp(mp.mpc(0, -1) * p * rN + mp.mpc(0, 1) * nu) * mp.hyp1f1(S + 1 + mp.mpc(0, -1) * eta, 2 * S + 1, mp.mpc(0, 2) * p * rN))
+            psi_val = Ak * Fk
+            g_analytic[i] = float(mp.re(psi_val))
+            f_analytic[i] = float(-(p / (W + _me)) * mp.im(psi_val))
+
+
     elif potential_index == 2:
         scheme = "A"
         g_analytic = np.sqrt(Fermi(Ee, Z, A, rN)) * np.sqrt((Ee + ME)/(2*Ee))
@@ -401,6 +418,26 @@ def plot_f_and_g(Ee, potential_index, cnf, data, output_directory_name):
         raise RuntimeError("No proper potential index has been passed")
 
 
+    plt.figure(figsize=(12,8))
+    plt.plot(Ee-ME, g_analytic, lw=1.5, label = "g analytic")
+    plt.xlabel(r"$T$ (MeV)")
+    plt.ylabel(r"$g_{\kappa=-1}(R)$")
+    plt.xlim((Ee-ME)[0], (Ee-ME)[-1])
+    plt.xscale("log")
+    plt.title(f"g wave func comparison, Scheme {scheme}")
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+    plt.figure(figsize=(12,8))
+    plt.plot(Ee-ME, f_analytic, lw=1.5, label = "f analytic")
+    plt.xlabel(r"$T$ (MeV)")
+    plt.ylabel(r"$f_{\kappa=1}(R)$")
+    plt.xlim((Ee-ME)[0], (Ee-ME)[-1])
+    plt.xscale("log")
+    plt.title(f"f wave func comparison, Scheme {scheme}")
+    plt.legend()
+    plt.show()
 
 
 
