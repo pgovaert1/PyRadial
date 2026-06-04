@@ -146,11 +146,21 @@ def plot_fermi_function(Q, Z, A, rN, data, plots_output_directory, potential_ind
     Analytic_fermi_plot = Fermi(x_plot, Z, A, rN)
     Numeric_fermi_plot = Fermi_numerical(x_plot, Z, A, data)
 
+    fortran_dat_path = os.path.join(os.path.dirname(__file__), '..', 'out_fortran', 'FermiN.dat')
+    fortran_energies, fortran_fermi = None, None
+    if os.path.isfile(fortran_dat_path):
+        raw = np.loadtxt(fortran_dat_path, comments='#')
+        # FermiN.dat stores kinetic energies; convert to total energy
+        fortran_energies = raw[:, 0] + ME
+        fortran_fermi = raw[:, 1]
+
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True, gridspec_kw={"height_ratios": [3, 1]})
-    
+
     # Top plot: comparison
     ax1.plot(x_plot, Analytic_fermi_plot, lw=1.5, label='Pure Coulomb Analytic')
     ax1.plot(x_plot, Numeric_fermi_plot, lw=1.5, label='Numerical')
+    if fortran_energies is not None:
+        ax1.plot(fortran_energies, fortran_fermi, lw=1.5, ls='--', label='FORTRAN (FermiN.dat)')
     ax1.set_ylabel('Fermi Function Value')
     ax1.set_title('Fermi Function vs Electron Energy')
     ax1.grid(True)
@@ -158,7 +168,12 @@ def plot_fermi_function(Q, Z, A, rN, data, plots_output_directory, potential_ind
 
     # Bottom plot: percentage difference
     percent_diff_fermi = 100.0 * (Numeric_fermi_plot - Analytic_fermi_plot) / Analytic_fermi_plot
-    ax2.plot(x_plot, percent_diff_fermi, lw=1.5)
+    ax2.plot(x_plot, percent_diff_fermi, lw=1.5, label='Numerical vs Analytic')
+    if fortran_energies is not None:
+        fortran_analytic_interp = np.interp(fortran_energies, x_plot, Analytic_fermi_plot)
+        percent_diff_fortran = 100.0 * (fortran_fermi - fortran_analytic_interp) / fortran_analytic_interp
+        ax2.plot(fortran_energies, percent_diff_fortran, lw=1.5, ls='--', label='FORTRAN vs Analytic')
+        ax2.legend()
     ax2.set_xlabel('Electron Energy (MeV)')
     ax2.set_ylabel('% Difference')
     ax2.grid(True)
@@ -166,6 +181,8 @@ def plot_fermi_function(Q, Z, A, rN, data, plots_output_directory, potential_ind
     plt.tight_layout()
     plt.savefig(os.path.join(plots_output_directory, f"Fermi_Function_potential_{potential_index}_Z{Z}_A{A}.png"), dpi=300)
     plt.show()
+
+
 
 
 # ========== SPECTRUM CALCULATION AND PLOTTING ==========
@@ -328,6 +345,32 @@ def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fer
     print(f"  Ee2 range: [{Ee2_grid[0]:.3f}, {Ee2_grid[-1]:.3f}] MeV with {len(Ee2_grid)} evaluation points")
     print(f"  cos(θ) range: [{cos_theta_grid[0]:.2f}, {cos_theta_grid[-1]:.2f}] with {len(cos_theta_grid)} evaluation points")
     print(f"  Note: INTEGRATING over cos(θ) to obtain dΓ/(dEe1 dEe2) at each energy pair")
+
+    # ========== COMPUTE TRIPLE-DIFFERENTIAL SPECTRUM FOR REFERENCE (NO INTEGRATION) ==========
+    # Store the triple-differential spectrum at grid points for angular dependence analysis
+    spectrum_triple_diff_analytic = np.zeros((len(Ee1_grid), len(Ee2_grid), len(cos_theta_grid)))
+    spectrum_triple_diff_numeric = np.zeros((len(Ee1_grid), len(Ee2_grid), len(cos_theta_grid)))
+    
+    for i, Ee1 in enumerate(Ee1_grid):
+        for j, Ee2 in enumerate(Ee2_grid):
+            if Ee1 + Ee2 > Q + 2*ME:
+                continue
+            for k, cos_theta in enumerate(cos_theta_grid):
+                spec_val_analytic = triple_differential_spectrum_integrand_cos_theta(
+                    cos_theta, Ee1, Ee2, Q,
+                    fermi_func=Fermi_analytic,
+                    E_func=lambda Ee: 0.0,
+                    nuclear_matrix_elements=nuclear_matrix_elements
+                )
+                spectrum_triple_diff_analytic[i, j, k] = max(spec_val_analytic, 0.0)
+
+                spec_val_numeric = triple_differential_spectrum_integrand_cos_theta(
+                    cos_theta, Ee1, Ee2, Q,
+                    fermi_func=Fermi_numeric,
+                    E_func=E_function_numeric,
+                    nuclear_matrix_elements=nuclear_matrix_elements
+                )
+                spectrum_triple_diff_numeric[i, j, k] = max(spec_val_numeric, 0.0)
     
     # ========== COMPUTE DOUBLE-DIFFERENTIAL SPECTRUM VIA INTEGRATION ==========
     # For each (Ee1, Ee2) pair, INTEGRATE over cos_theta from -1 to +1 using quad
@@ -379,31 +422,6 @@ def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fer
                                        limit=limit_angle, points=[-1.0, 0.0, 1.0])
             spectrum_double_diff_numeric[i, j] = max(integral_numeric, 0.0)
     
-    # ========== COMPUTE TRIPLE-DIFFERENTIAL SPECTRUM FOR REFERENCE (NO INTEGRATION) ==========
-    # Store the triple-differential spectrum at grid points for angular dependence analysis
-    spectrum_triple_diff_analytic = np.zeros((len(Ee1_grid), len(Ee2_grid), len(cos_theta_grid)))
-    spectrum_triple_diff_numeric = np.zeros((len(Ee1_grid), len(Ee2_grid), len(cos_theta_grid)))
-    
-    for i, Ee1 in enumerate(Ee1_grid):
-        for j, Ee2 in enumerate(Ee2_grid):
-            if Ee1 + Ee2 > Q + 2*ME:
-                continue
-            for k, cos_theta in enumerate(cos_theta_grid):
-                spec_val_analytic = triple_differential_spectrum_integrand_cos_theta(
-                    cos_theta, Ee1, Ee2, Q,
-                    fermi_func=Fermi_analytic,
-                    E_func=lambda Ee: 0.0,
-                    nuclear_matrix_elements=nuclear_matrix_elements
-                )
-                spectrum_triple_diff_analytic[i, j, k] = max(spec_val_analytic, 0.0)
-
-                spec_val_numeric = triple_differential_spectrum_integrand_cos_theta(
-                    cos_theta, Ee1, Ee2, Q,
-                    fermi_func=Fermi_numeric,
-                    E_func=E_function_numeric,
-                    nuclear_matrix_elements=nuclear_matrix_elements
-                )
-                spectrum_triple_diff_numeric[i, j, k] = max(spec_val_numeric, 0.0)
     
     # ========== COMPUTE DIRECT SPECTRUM USING two_electron_kernel ==========
     # For verification: compute dΓ/(dEe1 dEe2) directly without integration over cos(θ)
@@ -435,7 +453,7 @@ def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fer
     # ========== PLOT 1: 2D CONTOURS - DOUBLE DIFFERENTIAL SPECTRUM ==========
     print("\nGenerating double-differential spectrum contour plots...")
     
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+    fig, axes = plt.subplots(1, 4, figsize=(18, 5))
     fig.suptitle(f'dΓ/(dEe1 dEe2) - Potential {potential_index}', fontsize=14)
     
     # Plot 1: Analytic - Integrated over cos(θ)
@@ -458,14 +476,23 @@ def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fer
     
     # Plot 3: Direct two_electron_kernel computation (should match the integration)
     ax_d = axes[2]
-    # Use numeric for direct as the key comparison
+    # Use numeric Fermi function for direct as the key comparison
     contour_d = ax_d.contourf(Ee2_grid, Ee1_grid, spectrum_direct_numeric, levels=15, cmap='viridis')
     ax_d.set_xlabel('Ee2 (MeV)')
     ax_d.set_ylabel('Ee1 (MeV)')
     ax_d.set_title('Numeric Fermi\n(Direct two_electron_kernel)')
     cbar_d = plt.colorbar(contour_d, ax=ax_d)
     cbar_d.set_label('dΓ/(dEe1 dEe2)')
-    
+
+    ax_dn = axes[3]
+    # Use analytic Fermi function for direct as the key comparison
+    contour_dn = ax_dn.contourf(Ee2_grid, Ee1_grid, spectrum_direct_analytic, levels=15, cmap='viridis')
+    ax_dn.set_xlabel('Ee2 (MeV)')
+    ax_dn.set_ylabel('Ee1 (MeV)')
+    ax_dn.set_title('Analytic Fermi\n(Direct two_electron_kernel)')
+    cbar_dn = plt.colorbar(contour_dn, ax=ax_dn)
+    cbar_dn.set_label('dΓ/(dEe1 dEe2)')
+
     plt.tight_layout()
     plt.savefig(os.path.join(plots_output_directory, f"DoublesDiff_Spectrum_potential_{potential_index}_Z{Z}_A{A}.png"), dpi=300)
     plt.show()
