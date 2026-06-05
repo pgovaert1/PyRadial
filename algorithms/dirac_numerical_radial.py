@@ -147,6 +147,20 @@ def general_potential_parameters(r_a, r_b, l, T, derivatives):
 
     return u0, u1, u2, u3
 
+
+def singular_potential_parameters(r_b, T, Z, potential_index, derivatives):
+    """
+    Generate cubic splined potential parameters (u0, u1, u2, u3) on singular range [0, r_b].
+
+    u1/u2/u3 come from the spline via general_potential_parameters. u0 is set explicitly:
+    ALPHA*Z for Coulomb-type potentials (index 0/1) and 0.0 for regular-at-origin potentials
+    (index 2/3), so that singular_power_series_terms takes the correct solution branch.
+    """
+    _, u1, u2, u3 = general_potential_parameters(0, r_b, 0, T, derivatives)
+    u0 = ALPHA * Z if potential_index in (0, 1) else 0.0
+    return u0, u1, u2, u3
+
+
 # ========== Neumaier compensated summation functions ==========
 # ========== Enhances floating-point precision for long accumulation loops ==========
 
@@ -637,7 +651,7 @@ def general_power_series_terms(u_array, initial_condition_a, initial_condition_b
 
 # ========== Assemble series coefficients from all intervals ==========
 
-def calc_series_terms(grid_points, l, T, Z, kappa, sigma, derivatives, ratio_max=0.05, max_subdiv=200):
+def calc_series_terms(grid_points, l, T, Z, kappa, sigma, derivatives, potential_index, ratio_max=0.05, max_subdiv=200):
     """
     Compute power-series coefficients over the full radial grid
 
@@ -677,7 +691,7 @@ def calc_series_terms(grid_points, l, T, Z, kappa, sigma, derivatives, ratio_max
 
     """
     # ========== Compute first interval [0, r_b] using spline at R0 ==========
-    u_parameters0 = general_potential_parameters(0, grid_points[1], l, T, derivatives)
+    u_parameters0 = singular_potential_parameters(grid_points[1], T, Z, potential_index, derivatives)
     (
         Series_terms0a,
         Series_terms0b,
@@ -1115,7 +1129,7 @@ def Visualize(config,cnf):
 
 
 
-    series_terms_upper, series_terms_lower = calc_series_terms(mesh_points, angular_momentum_quantum_number, T, Z, kappa, sigma, derivatives)
+    series_terms_upper, series_terms_lower = calc_series_terms(mesh_points, angular_momentum_quantum_number, T, Z, kappa, sigma, derivatives, potential_index)
     wave_function_upper, wave_function_lower = solve_power_series(series_terms_upper, series_terms_lower, mesh_points)
     N, delta, r_c = Normalization_Constant(mesh_points, rc_idx ,wave_function_upper,wave_function_lower, Analytic_normalization_const, T, k, eta, W, kappa, Z, Lambda, sigma, R_au, potential_index, phi_r)
 
@@ -1236,7 +1250,7 @@ def Generate_Fermi_Data(config,cnf):
 
             print(f"Finding wave function for T = {T}, iter = {i}, eta = {eta}")
             rc_idx = find_rc(mesh_points, k, Z, R_au, potential_index, phi_r, potential)
-            series_terms_upper, series_terms_lower = calc_series_terms(mesh_points, angular_momentum_quantum_number, T, Z, kappa, sigma, derivatives)
+            series_terms_upper, series_terms_lower = calc_series_terms(mesh_points, angular_momentum_quantum_number, T, Z, kappa, sigma, derivatives, potential_index)
             wave_function_upper, wave_function_lower = solve_power_series(series_terms_upper, series_terms_lower, mesh_points)
             N, delta, r_c = Normalization_Constant(mesh_points, rc_idx ,wave_function_upper,wave_function_lower, Analytic_normalization_const, T, k, eta, W, kappa, Z, Lambda, sigma, R_au, potential_index, phi_r)
 
@@ -1284,7 +1298,7 @@ def Generate_Fermi_Data(config,cnf):
             k = np.sqrt(T * (T + 2 * C**2)) / C
             rc_idx = find_rc(mesh_points, k, 0, R_au, 0, 0, potential)
             series_terms_upper, series_terms_lower = calc_series_terms(
-                mesh_points, angular_momentum_quantum_number, T, 0, kappa, sigma, derivatives_zero)
+                mesh_points, angular_momentum_quantum_number, T, 0, kappa, sigma, derivatives_zero, 0)
             wave_function_upper, wave_function_lower = solve_power_series(
                 series_terms_upper, series_terms_lower, mesh_points)
             N, _, _ = Normalization_Constant(
