@@ -91,66 +91,7 @@ def potential(r, Z, R_au, potential_index, phi_r):
         raise RuntimeError("No proper potential function index number was selected")
 
 
-# ========== Calculate potential parameters u0,u1,u2,u3 for singular interval [0, r_b] ==========
-
-def singular_potential_parameters(r_b, T, Z, R_au, potential_index, phi_r):
-    """
-    Generate cubic splined potential parameters (u0, u1, u2, u3) on singular range [0, r_b]
-
-    Parameters
-    ----------
-    r_b : float
-        Final radial coordinate in given segment [0, r_b].
-    T : float
-        Kinetic energy in Hartree units.
-    Z : int
-        Atomic number.
-    R_au : float
-        Nuclear radius in Atomic units, defined by R = 1.2e-15 * A^(1/3) /AU.
-    potential_index: int
-        Index specifying which potential model to use.
-    phi_r : callable
-        Function phi(r) used in the Thomas-Fermi screening potential.
-
-    Returns
-    -------
-    u0 : float
-        First polynomial coefficient of cubic spline.
-    u1 : float
-        Second polynomial coefficient of cubic spline.
-    u2 : float
-        Third polynomial coefficient of cubic spline.
-    u3 : float
-        Fourth polynomial coefficient of cubic spline.
-
-    """
-    h = r_b
-    Z_sing = Z
-
-    # ========== Define regular potential based on index ==========
-    if potential_index in (0,1):
-        V_reg = lambda r: potential(r, Z, R_au, potential_index, phi_r) - Z_sing / r
-        u0 = ALPHA * Z_sing
-    elif potential_index in (2, 3):
-        V_reg = lambda r: potential(r, Z, R_au, potential_index, phi_r)
-        u0 = 0.0
-    else:
-        raise RuntimeError("No proper potential potential_index selected")
-
-    # ========== Compute derivatives at R0 ==========
-    v0 = float(V_reg(R0))
-    dr = 1e-8
-    v1 = (V_reg(R0 + dr) - V_reg(R0 - dr)) / (2 * dr)
-    v2 = (V_reg(R0 + dr) - 2 * V_reg(R0) + V_reg(R0 - dr)) / (dr ** 2)
-
-    # ========== Scale parameters by ALPHA and h ==========
-    u1 = ALPHA * h * (v0 - T)
-    u2 = ALPHA * h ** 2 * (v1)
-    u3 = ALPHA * h ** 3 * (0.5 * v2)
-
-    return u0, u1, u2, u3
-
-# ========== Calculate potential parameters u0,u1,u2,u3 for general interval [r_a, r_b] ==========
+# ========== Calculate potential parameters u0,u1,u2,u3 for interval [r_a, r_b] ==========
 
 def general_potential_parameters(r_a, r_b, l, T, derivatives):
     """
@@ -386,7 +327,7 @@ def singular_power_series_terms(u_array, r_b, l ,Z , kappa, sigma):
             if max(abs(an) , abs(bn)) < tolerance:
 
                 condition1 = abs(r_b * (s * S_a_val + S_an_val) - sigma * abs(kappa) * r_b *S_a_val + ((u0+u1+u2+u3) - 2*C*r_b) * r_b * S_b_val)
-                condition2 = abs(r_b * ((s+t)*S_b_val + S_bn_val) + sigma * abs(kappa) * r_b * S_b - (u0+u1+u2+u3)*r_b*S_a_val )
+                condition2 = abs(r_b * ((s+t)*S_b_val + S_bn_val) + sigma * abs(kappa) * r_b * S_b_val - (u0+u1+u2+u3)*r_b*S_a_val )
 
                 if max(condition1 , condition2) < tolerance:
                     break
@@ -696,22 +637,15 @@ def general_power_series_terms(u_array, initial_condition_a, initial_condition_b
 
 # ========== Assemble series coefficients from all intervals ==========
 
-def calc_series_terms(grid_points, l, T, Z, kappa, sigma, R_au, derivatives, potential_index, phi_r, ratio_max=0.05, max_subdiv=200):
+def calc_series_terms(grid_points, l, T, Z, kappa, sigma, derivatives, ratio_max=0.05, max_subdiv=200):
     """
     Compute power-series coefficients over the full radial grid
 
-    The singular interval near the origin [0,r_b], is first solved using 'singular_power_series_terms',
-    which generates the initial recurrence coefficients A_n and B_n together with the corresponding
-    endpoint values of the radial wave function P(r) and Q(r) on the local interval [0,r_b]
-
-    For each subsequent grid interval [r_a,r_b], local recurrence coefficients are computed using
-    'general_power_series_terms'. The endpoints values P(r_b) and Q(r_b) from the previous interval
-    are used as the initial conditions for the next interval, ensuring continuity of the radial solution
-    across the full grid
-
-    If the interval size ratio (h / r_a) exceeds 'ratio_max', the interval is subdivided into smaller subintervals
-    before computing the local series expansion. The final output consists of all local coefficient sets A_n and
-    B_n stitched over the complete radial range [0,r]
+    The first interval [0, r_b] is bootstrapped with 'singular_power_series_terms' using potential
+    parameters evaluated at the spline's near-origin point. For each subsequent interval [r_a, r_b],
+    parameters come from 'general_potential_parameters' and the solution is propagated with
+    'general_power_series_terms'. Intervals where h/r_a exceeds ratio_max are automatically
+    subdivided.
 
     Parameters
     ----------
@@ -727,14 +661,8 @@ def calc_series_terms(grid_points, l, T, Z, kappa, sigma, R_au, derivatives, pot
         Relativistic angular momentum quantum number (See eq 2.19b Radial Fortran subroutine by Francesc Salvat).
     sigma : int
         Value of -sign(kappa).
-    R_au : float
-        Nuclear radius in Atomic units, defined by R = 1.2e-15 * A^(1/3)/ AU.
     derivatives : list
         List made of zero, first, second and third order derivatives of the cubic splined potential.
-    potential_index: int
-        Index specifying which potential model to use.
-    phi_r : callable
-        Function phi(r) used in the Thomas-Fermi screening potential.
     ratio_max : float
         Maximum ratio to compare to h/r_a.
     max_subdiv : int
@@ -748,10 +676,8 @@ def calc_series_terms(grid_points, l, T, Z, kappa, sigma, R_au, derivatives, pot
         List of all power series coefficients Bn over range (0,r)
 
     """
-    # ========== Compute singular interval [0, r_b] ==========
-    u_parameters0 = singular_potential_parameters(
-        grid_points[1], T, Z, R_au, potential_index, phi_r
-    )
+    # ========== Compute first interval [0, r_b] using spline at R0 ==========
+    u_parameters0 = general_potential_parameters(0, grid_points[1], l, T, derivatives)
     (
         Series_terms0a,
         Series_terms0b,
@@ -1189,7 +1115,7 @@ def Visualize(config,cnf):
 
 
 
-    series_terms_upper, series_terms_lower = calc_series_terms(mesh_points,angular_momentum_quantum_number, T, Z , kappa, sigma, R_au, derivatives, potential_index, phi_r)
+    series_terms_upper, series_terms_lower = calc_series_terms(mesh_points, angular_momentum_quantum_number, T, Z, kappa, sigma, derivatives)
     wave_function_upper, wave_function_lower = solve_power_series(series_terms_upper, series_terms_lower, mesh_points)
     N, delta, r_c = Normalization_Constant(mesh_points, rc_idx ,wave_function_upper,wave_function_lower, Analytic_normalization_const, T, k, eta, W, kappa, Z, Lambda, sigma, R_au, potential_index, phi_r)
 
@@ -1272,7 +1198,10 @@ def Generate_Fermi_Data(config,cnf):
 
     ###Setting up cubic spline
     N_V = 50000
-    r_V = np.linspace(R0,r_END, N_V)
+    N_inner = 20000
+    r_V_inner = np.linspace(R0, R_au, N_inner)        # dense inside nucleus
+    r_V_outer = np.linspace(R_au, r_END, N_V)         # same outer density as before
+    r_V = np.concatenate([r_V_inner, r_V_outer[1:]])  # drop duplicate at R_au
 
     RV = r_V * potential(r_V,Z, R_au, potential_index, phi_r)
 
@@ -1307,7 +1236,7 @@ def Generate_Fermi_Data(config,cnf):
 
             print(f"Finding wave function for T = {T}, iter = {i}, eta = {eta}")
             rc_idx = find_rc(mesh_points, k, Z, R_au, potential_index, phi_r, potential)
-            series_terms_upper, series_terms_lower = calc_series_terms(mesh_points,angular_momentum_quantum_number, T, Z , kappa, sigma ,R_au, derivatives, potential_index, phi_r)
+            series_terms_upper, series_terms_lower = calc_series_terms(mesh_points, angular_momentum_quantum_number, T, Z, kappa, sigma, derivatives)
             wave_function_upper, wave_function_lower = solve_power_series(series_terms_upper, series_terms_lower, mesh_points)
             N, delta, r_c = Normalization_Constant(mesh_points, rc_idx ,wave_function_upper,wave_function_lower, Analytic_normalization_const, T, k, eta, W, kappa, Z, Lambda, sigma, R_au, potential_index, phi_r)
 
@@ -1329,7 +1258,48 @@ def Generate_Fermi_Data(config,cnf):
 
         np.savez_compressed(file_path, T = T_arr, r = r_arr, P = P_arr, Q = Q_arr)
 
+    # ---- Z=0 reference wavefunctions (free particle, V=0) ----
+    main_output_directory = Path(config["paths"]["output_directory"]) / f"Dirac_{config['isotope']}"
+    NPZ_output_directory = main_output_directory / "NPZ_files"
+    NPZ_output_directory.mkdir(parents=True, exist_ok=True)
+    T_arr = np.asarray(T_range, dtype=float)
+    r_arr = np.asarray(mesh_points, dtype=float)
 
+    RV_zero = np.zeros_like(r_V)
+    cs0 = CubicSpline(r_V, RV_zero)
+    derivatives_zero = [cs0, cs0.derivative(1), cs0.derivative(2), cs0.derivative(3)]
+
+    kappa = config["parameters"]["kappa"]
+    for i, sign in enumerate(kappa_sign):
+        kappa *= sign
+        print(f"Z=0 run ({i+1}/{len(kappa_sign)}) with kappa = {kappa:+d}")
+        sigma = -np.sign(kappa)
+        Lambda_z0 = float(abs(kappa))  # sqrt(kappa^2 - 0)
+
+        P_list_z0 = []
+        Q_list_z0 = []
+
+        for _, T in enumerate(tqdm(T_range, desc=f"Z=0 kappa={kappa:+d}")):
+            W = T + C**2
+            k = np.sqrt(T * (T + 2 * C**2)) / C
+            rc_idx = find_rc(mesh_points, k, 0, R_au, 0, 0, potential)
+            series_terms_upper, series_terms_lower = calc_series_terms(
+                mesh_points, angular_momentum_quantum_number, T, 0, kappa, sigma, derivatives_zero)
+            wave_function_upper, wave_function_lower = solve_power_series(
+                series_terms_upper, series_terms_lower, mesh_points)
+            N, _, _ = Normalization_Constant(
+                mesh_points, rc_idx, wave_function_upper, wave_function_lower,
+                0.0, T, k, 0.0, W, kappa, 0, Lambda_z0, sigma, R_au, 0, 0)
+
+            P_list_z0.append(N * wave_function_upper)
+            Q_list_z0.append(N * wave_function_lower)
+
+        filename_z0 = f"{config['isotope']}_potential_{potential_index}_kappa_{kappa:+d}_Z0_A{A}.npz"
+        file_path_z0 = NPZ_output_directory / filename_z0
+        np.savez_compressed(file_path_z0,
+                            T=T_arr, r=r_arr,
+                            P=np.asarray(P_list_z0, dtype=float),
+                            Q=np.asarray(Q_list_z0, dtype=float))
 
 
 
