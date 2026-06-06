@@ -121,7 +121,7 @@ def radial_grid(r_END, A_grid, N, r2, DRN, nuc_radius):
 ### Find mminimum range up to which to extend the mesh range used to solve P and Q
 ###################################################################################
 
-def obtain_mesh_range(k, Z, R_au, potential_index, phi_r, potential_function):
+def obtain_mesh_range(k, Z, R_au, potential_index, phi_r, potential_function, verbose=False):
     """
     Find the minimum range needed such that a matching radius rc is included in the radial grid.
     Extending the radial point r_max until asymptotic condition |rV(r) - Z| < EPSILON is satisfied
@@ -164,7 +164,8 @@ def obtain_mesh_range(k, Z, R_au, potential_index, phi_r, potential_function):
         r_max *= 2
         RV = r_max* potential_function(r_max, Z, R_au, potential_index, phi_r)
 
-    print(f"mesh range set to {r_max}")
+    if verbose:
+        print(f"mesh range set to {r_max}")
 
     return r_max
 
@@ -174,7 +175,7 @@ def obtain_mesh_range(k, Z, R_au, potential_index, phi_r, potential_function):
 ### Find_rc is a function finding the matching radius rc at which one can normalize the power series by matching it witht he asymptotic behavior
 #################################################################################################################################################
 
-def find_rc(r_grid, k, Z , R_au, potential_index, phi_r,potential_function):
+def find_rc(r_grid, k, Z , R_au, potential_index, phi_r, potential_function, verbose=False):
     """
     Obtains the ndarray index where the value of r_grid satisfies |rV(r) - Z| < EPSILON
     and k*r_grid > k_min.
@@ -228,5 +229,6 @@ def find_rc(r_grid, k, Z , R_au, potential_index, phi_r,potential_function):
 
     if idx_rc is None:
         raise RuntimeError("No rc found, extend distance")
-    print(f"rc succesfully found at rc = {r_grid[idx_rc]}")
+    if verbose:
+        print(f"rc succesfully found at rc = {r_grid[idx_rc]}")
     return idx_rc

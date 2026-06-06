@@ -45,29 +45,24 @@ def potential(r, Z, R_au, potential_index, phi_r):
     float or ndarray
         Evaluated potential value(s).
     """
-    Z_sing = Z  # Singular potential term which blows up at r → 0
 
     if potential_index == 0:
         # Coulomb potential
-        return Z_sing / r
+        return Z/ r
 
     elif potential_index == 1:
         # Coulomb + exponential perturbation
         V0 = -1
         A = 1
-        return Z_sing / r + V0 * np.exp(-A * r)
+        return Z / r + V0 * np.exp(-A * r)
 
     elif potential_index == 2:
         # Finite nuclear model (uniform charge distribution)
         r_arr = np.asarray(r, dtype=float)
-        V = Z_sing / r_arr
+        V = Z / r_arr
 
         inside = r_arr < R_au
-        V = np.where(
-            inside,
-            Z_sing / (2 * R_au) * (3 - (r_arr / R_au) ** 2),
-            V
-        )
+        V = np.where(inside, Z / (2 * R_au) * (3 - (r_arr / R_au) ** 2), V)
 
         if np.isscalar(r):
             return float(V)
@@ -91,66 +86,7 @@ def potential(r, Z, R_au, potential_index, phi_r):
         raise RuntimeError("No proper potential function index number was selected")
 
 
-# ========== Calculate potential parameters u0,u1,u2,u3 for singular interval [0, r_b] ==========
-
-def singular_potential_parameters(r_b, T, Z, R_au, potential_index, phi_r):
-    """
-    Generate cubic splined potential parameters (u0, u1, u2, u3) on singular range [0, r_b]
-
-    Parameters
-    ----------
-    r_b : float
-        Final radial coordinate in given segment [0, r_b].
-    T : float
-        Kinetic energy in Hartree units.
-    Z : int
-        Atomic number.
-    R_au : float
-        Nuclear radius in Atomic units, defined by R = 1.2e-15 * A^(1/3) /AU.
-    potential_index: int
-        Index specifying which potential model to use.
-    phi_r : callable
-        Function phi(r) used in the Thomas-Fermi screening potential.
-
-    Returns
-    -------
-    u0 : float
-        First polynomial coefficient of cubic spline.
-    u1 : float
-        Second polynomial coefficient of cubic spline.
-    u2 : float
-        Third polynomial coefficient of cubic spline.
-    u3 : float
-        Fourth polynomial coefficient of cubic spline.
-
-    """
-    h = r_b
-    Z_sing = Z
-
-    # ========== Define regular potential based on index ==========
-    if potential_index in (0,1):
-        V_reg = lambda r: potential(r, Z, R_au, potential_index, phi_r) - Z_sing / r
-        u0 = ALPHA * Z_sing
-    elif potential_index in (2, 3):
-        V_reg = lambda r: potential(r, Z, R_au, potential_index, phi_r)
-        u0 = 0.0
-    else:
-        raise RuntimeError("No proper potential potential_index selected")
-
-    # ========== Compute derivatives at R0 ==========
-    v0 = float(V_reg(R0))
-    dr = 1e-8
-    v1 = (V_reg(R0 + dr) - V_reg(R0 - dr)) / (2 * dr)
-    v2 = (V_reg(R0 + dr) - 2 * V_reg(R0) + V_reg(R0 - dr)) / (dr ** 2)
-
-    # ========== Scale parameters by ALPHA and h ==========
-    u1 = ALPHA * h * (v0 - T)
-    u2 = ALPHA * h ** 2 * (v1)
-    u3 = ALPHA * h ** 3 * (0.5 * v2)
-
-    return u0, u1, u2, u3
-
-# ========== Calculate potential parameters u0,u1,u2,u3 for general interval [r_a, r_b] ==========
+# ========== Calculate potential parameters u0,u1,u2,u3 for interval [r_a, r_b] ==========
 
 def general_potential_parameters(r_a, r_b, l, T, derivatives):
     """
@@ -181,8 +117,7 @@ def general_potential_parameters(r_a, r_b, l, T, derivatives):
         Fourth polynomial coefficient of cubic spline.
 
     """
-    ra = max(r_a, R0)
-    rb = r_b
+    ra = r_a
 
     # ========== Extract derivatives at ra ==========
     rv0 = float(derivatives[0](ra))
@@ -205,6 +140,7 @@ def general_potential_parameters(r_a, r_b, l, T, derivatives):
     u3 = ALPHA * v3 * h ** 3
 
     return u0, u1, u2, u3
+
 
 # ========== Neumaier compensated summation functions ==========
 # ========== Enhances floating-point precision for long accumulation loops ==========
@@ -304,7 +240,7 @@ def singular_power_series_terms(u_array, r_b, l ,Z , kappa, sigma):
     a = []
     b = []
 
-    if u0 != 0:
+    if abs(u0) > 1e-6:
         t = 0
         if (Z/C)**2 > kappa**2:
             raise RuntimeError("s = sqrt(kappa^2 - u0^2) is imaginary")
@@ -386,7 +322,7 @@ def singular_power_series_terms(u_array, r_b, l ,Z , kappa, sigma):
             if max(abs(an) , abs(bn)) < tolerance:
 
                 condition1 = abs(r_b * (s * S_a_val + S_an_val) - sigma * abs(kappa) * r_b *S_a_val + ((u0+u1+u2+u3) - 2*C*r_b) * r_b * S_b_val)
-                condition2 = abs(r_b * ((s+t)*S_b_val + S_bn_val) + sigma * abs(kappa) * r_b * S_b - (u0+u1+u2+u3)*r_b*S_a_val )
+                condition2 = abs(r_b * ((s+t)*S_b_val + S_bn_val) + sigma * abs(kappa) * r_b * S_b_val - (u0+u1+u2+u3)*r_b*S_a_val )
 
                 if max(condition1 , condition2) < tolerance:
                     break
@@ -395,7 +331,7 @@ def singular_power_series_terms(u_array, r_b, l ,Z , kappa, sigma):
                 raise RuntimeError(f"No convergenvce before n = {n}")
 
 
-    elif (u0 == 0 and sigma == 1):
+    elif sigma == 1:
         s = abs(kappa)
         t = 1
 
@@ -451,7 +387,7 @@ def singular_power_series_terms(u_array, r_b, l ,Z , kappa, sigma):
             if n > 499:
                 raise RuntimeError(f"No convergenvce before n = {n}")
 
-    elif (u0 == 0 and sigma == -1):
+    else:  # sigma == -1
         s = abs(kappa) + 1
         t = -1
 
@@ -511,8 +447,6 @@ def singular_power_series_terms(u_array, r_b, l ,Z , kappa, sigma):
 
             if n > 499:
                 raise RuntimeError(f"No convergenvce before n = {n}")
-    else:
-        raise RuntimeError("None of the singular u_0, sigma conditions were met")
 
     arr_a = np.array(a)
     arr_b = np.array(b)
@@ -696,22 +630,15 @@ def general_power_series_terms(u_array, initial_condition_a, initial_condition_b
 
 # ========== Assemble series coefficients from all intervals ==========
 
-def calc_series_terms(grid_points, l, T, Z, kappa, sigma, R_au, derivatives, potential_index, phi_r, ratio_max=0.05, max_subdiv=200):
+def calc_series_terms(grid_points, l, T, Z, kappa, sigma, derivatives, ratio_max=0.05, max_subdiv=200):
     """
     Compute power-series coefficients over the full radial grid
 
-    The singular interval near the origin [0,r_b], is first solved using 'singular_power_series_terms',
-    which generates the initial recurrence coefficients A_n and B_n together with the corresponding
-    endpoint values of the radial wave function P(r) and Q(r) on the local interval [0,r_b]
-
-    For each subsequent grid interval [r_a,r_b], local recurrence coefficients are computed using
-    'general_power_series_terms'. The endpoints values P(r_b) and Q(r_b) from the previous interval
-    are used as the initial conditions for the next interval, ensuring continuity of the radial solution
-    across the full grid
-
-    If the interval size ratio (h / r_a) exceeds 'ratio_max', the interval is subdivided into smaller subintervals
-    before computing the local series expansion. The final output consists of all local coefficient sets A_n and
-    B_n stitched over the complete radial range [0,r]
+    The first interval [0, r_b] is bootstrapped with 'singular_power_series_terms' using potential
+    parameters evaluated at the spline's near-origin point. For each subsequent interval [r_a, r_b],
+    parameters come from 'general_potential_parameters' and the solution is propagated with
+    'general_power_series_terms'. Intervals where h/r_a exceeds ratio_max are automatically
+    subdivided.
 
     Parameters
     ----------
@@ -727,14 +654,8 @@ def calc_series_terms(grid_points, l, T, Z, kappa, sigma, R_au, derivatives, pot
         Relativistic angular momentum quantum number (See eq 2.19b Radial Fortran subroutine by Francesc Salvat).
     sigma : int
         Value of -sign(kappa).
-    R_au : float
-        Nuclear radius in Atomic units, defined by R = 1.2e-15 * A^(1/3)/ AU.
     derivatives : list
         List made of zero, first, second and third order derivatives of the cubic splined potential.
-    potential_index: int
-        Index specifying which potential model to use.
-    phi_r : callable
-        Function phi(r) used in the Thomas-Fermi screening potential.
     ratio_max : float
         Maximum ratio to compare to h/r_a.
     max_subdiv : int
@@ -748,10 +669,8 @@ def calc_series_terms(grid_points, l, T, Z, kappa, sigma, R_au, derivatives, pot
         List of all power series coefficients Bn over range (0,r)
 
     """
-    # ========== Compute singular interval [0, r_b] ==========
-    u_parameters0 = singular_potential_parameters(
-        grid_points[1], T, Z, R_au, potential_index, phi_r
-    )
+    # ========== Compute first interval [0, r_b] using spline at R0 ==========
+    u_parameters0 = general_potential_parameters(0, grid_points[1], l, T, derivatives)
     (
         Series_terms0a,
         Series_terms0b,
@@ -1154,7 +1073,6 @@ def Visualize(config,cnf):
 
     r_N = config["mesh_grid"]["num_mesh_steps"]
     r2 = config["mesh_grid"]["second_point"]
-    r0 = 1e-15 ## to avoid 1/r division by 0
     DRN = config["mesh_grid"]["upper_limit_step_size"]#Upper limit on distance between points near the end regime (make sure this stays small enough or wavefunc will not converge at larger distances r)
 
 
@@ -1175,7 +1093,7 @@ def Visualize(config,cnf):
 
     ###Setting up cubic spline
     N_V = 50000
-    r_V = np.linspace(r0,r_END, N_V)
+    r_V = np.linspace(R0,r_END, N_V)
 
     RV = r_V * potential(r_V,Z, R_au, potential_index, phi_r)
 
@@ -1189,7 +1107,7 @@ def Visualize(config,cnf):
 
 
 
-    series_terms_upper, series_terms_lower = calc_series_terms(mesh_points,angular_momentum_quantum_number, T, Z , kappa, sigma, R_au, derivatives, potential_index, phi_r)
+    series_terms_upper, series_terms_lower = calc_series_terms(mesh_points, angular_momentum_quantum_number, T, Z, kappa, sigma, derivatives)
     wave_function_upper, wave_function_lower = solve_power_series(series_terms_upper, series_terms_lower, mesh_points)
     N, delta, r_c = Normalization_Constant(mesh_points, rc_idx ,wave_function_upper,wave_function_lower, Analytic_normalization_const, T, k, eta, W, kappa, Z, Lambda, sigma, R_au, potential_index, phi_r)
 
@@ -1222,11 +1140,13 @@ def Visualize(config,cnf):
     plt.grid(True)
     plt.title(f"E = {T: .2g}, Z = {Z}, A = {N: .5g}, delta = {delta: .3g}, N = {r_N}, DRN = {DRN} , r2 = {r2}, r_end = {r_END}, r_c = {r_c: .3g}")
     plt.legend()
-    plt.show()
+    if config.get("verbose", True):
+        plt.show()
 
 
 def Generate_Fermi_Data(config,cnf):
     ### DECLARE PARAMETERS
+    verbose = config.get("verbose", True)
     A = cnf["A"]
     Zf = cnf["Z"]
     Z = -Zf
@@ -1238,7 +1158,8 @@ def Generate_Fermi_Data(config,cnf):
 
     potential_index = config["generator"]["potential_index"]
     if potential_index == 3:
-        print("calculating thomas fermi func")
+        if verbose:
+            print("calculating thomas fermi func")
         phi_r = make_phi_r(Zf)
     else:
         phi_r = 0
@@ -1267,16 +1188,22 @@ def Generate_Fermi_Data(config,cnf):
         r_N += 10000
         A_grid = ((r_END - (r_N - 1) *r2) / r_END) * (DRN / (DRN -r2))
 
-    print(f"resolution set to {r_N} mesh points")
+    if verbose:
+        print(f"resolution set to {r_N} mesh points")
     mesh_points = radial_grid(r_END, A_grid, r_N, r2, DRN, R_au)
 
     ###Setting up cubic spline
     N_V = 50000
-    r_V = np.linspace(R0,r_END, N_V)
+    N_inner = 20000
+    r_V_inner = np.linspace(R0, R_au, N_inner)        # dense inside nucleus
+    r_V_outer = np.linspace(R_au, r_END, N_V)         # same outer density as before
+    r_V = np.concatenate([r_V_inner, r_V_outer[1:]])  # drop duplicate at R_au
 
     RV = r_V * potential(r_V,Z, R_au, potential_index, phi_r)
 
     RV_spline = CubicSpline(r_V, RV)
+    
+
 
     RV_spline_prime = RV_spline.derivative(1)
     RV_spline_second = RV_spline.derivative(2)
@@ -1289,25 +1216,26 @@ def Generate_Fermi_Data(config,cnf):
 
     for i , sign in enumerate(kappa_sign):
         kappa *= sign
-        print(f"Performing run ({i+1}/{len(kappa_sign)}) with kappa = {kappa:+d} ")
+        if verbose:
+            print(f"Performing run ({i+1}/{len(kappa_sign)}) with kappa = {kappa:+d} ")
         sigma = -np.sign(kappa)
         Lambda = np.sqrt(kappa**2 - (Z/C)**2)
 
 
         P_list = []
         Q_list = []
-        aP_list = []
-        aQ_list = []
 
-        for i, T in enumerate(tqdm(T_range, desc = "Solving Dirac functions over energy range")):
+
+        for i, T in enumerate(tqdm(T_range, desc = f"Solving Dirac functions over energy range for kappa = {kappa:+d}")):
             W = T + C**2
             k = np.sqrt(T*(T + 2*C**2))/C
             eta = ALPHA* Z*W/(k*C)
             Analytic_normalization_const = 1 /Lambda * 1/np.sqrt((Z/C)**2 * (W+C**2)**2 + (kappa + Lambda)**2 *(k*C)**2)
 
-            print(f"Finding wave function for T = {T}, iter = {i}, eta = {eta}")
-            rc_idx = find_rc(mesh_points, k, Z, R_au, potential_index, phi_r, potential)
-            series_terms_upper, series_terms_lower = calc_series_terms(mesh_points,angular_momentum_quantum_number, T, Z , kappa, sigma ,R_au, derivatives, potential_index, phi_r)
+            if verbose:
+                print(f"Finding wave function for T = {T}, iter = {i}, eta = {eta}")
+            rc_idx = find_rc(mesh_points, k, Z, R_au, potential_index, phi_r, potential, verbose)
+            series_terms_upper, series_terms_lower = calc_series_terms(mesh_points, angular_momentum_quantum_number, T, Z, kappa, sigma, derivatives)
             wave_function_upper, wave_function_lower = solve_power_series(series_terms_upper, series_terms_lower, mesh_points)
             N, delta, r_c = Normalization_Constant(mesh_points, rc_idx ,wave_function_upper,wave_function_lower, Analytic_normalization_const, T, k, eta, W, kappa, Z, Lambda, sigma, R_au, potential_index, phi_r)
 
@@ -1329,7 +1257,51 @@ def Generate_Fermi_Data(config,cnf):
 
         np.savez_compressed(file_path, T = T_arr, r = r_arr, P = P_arr, Q = Q_arr)
 
+    if verbose:
+        # ---- Z=0 reference wavefunctions (free particle, V=0) ----
+        # Only generated with --verbose; these files are needed by --mode data
+        # if you want E-function / angular-correlation features.
+        main_output_directory_z0 = Path(config["paths"]["output_directory"]) / f"Dirac_{config['isotope']}"
+        NPZ_output_directory_z0 = main_output_directory_z0 / "NPZ_files"
+        NPZ_output_directory_z0.mkdir(parents=True, exist_ok=True)
+        T_arr_z0 = np.asarray(T_range, dtype=float)
+        r_arr_z0 = np.asarray(mesh_points, dtype=float)
 
+        RV_zero = np.zeros_like(r_V)
+        cs0 = CubicSpline(r_V, RV_zero)
+        derivatives_zero = [cs0, cs0.derivative(1), cs0.derivative(2), cs0.derivative(3)]
+
+        kappa = config["parameters"]["kappa"]
+        for i, sign in enumerate(kappa_sign):
+            kappa *= sign
+            print(f"Z=0 run ({i+1}/{len(kappa_sign)}) with kappa = {kappa:+d}")
+            sigma = -np.sign(kappa)
+            Lambda_z0 = float(abs(kappa))  # sqrt(kappa^2 - 0)
+
+            P_list_z0 = []
+            Q_list_z0 = []
+
+            for _, T in enumerate(tqdm(T_range, desc=f"Z=0 kappa={kappa:+d}")):
+                W = T + C**2
+                k = np.sqrt(T * (T + 2 * C**2)) / C
+                rc_idx = find_rc(mesh_points, k, 0, R_au, 0, 0, potential)
+                series_terms_upper, series_terms_lower = calc_series_terms(
+                    mesh_points, angular_momentum_quantum_number, T, 0, kappa, sigma, derivatives_zero)
+                wave_function_upper, wave_function_lower = solve_power_series(
+                    series_terms_upper, series_terms_lower, mesh_points)
+                N, _, _ = Normalization_Constant(
+                    mesh_points, rc_idx, wave_function_upper, wave_function_lower,
+                    0.0, T, k, 0.0, W, kappa, 0, Lambda_z0, sigma, R_au, 0, 0)
+
+                P_list_z0.append(N * wave_function_upper)
+                Q_list_z0.append(N * wave_function_lower)
+
+            filename_z0 = f"{config['isotope']}_potential_{potential_index}_kappa_{kappa:+d}_Z0_A{A}.npz"
+            file_path_z0 = NPZ_output_directory_z0 / filename_z0
+            np.savez_compressed(file_path_z0,
+                                T=T_arr_z0, r=r_arr_z0,
+                                P=np.asarray(P_list_z0, dtype=float),
+                                Q=np.asarray(Q_list_z0, dtype=float))
 
 
 
