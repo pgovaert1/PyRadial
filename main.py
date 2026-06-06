@@ -59,12 +59,18 @@ def main():
     # Isotope selection
     parser.add_argument("--isotope", type = str, choices = ["Xe136", "Mo100", "Nd150"], help = f"select an isotope from the isotopes.py file for which to run the scripts, (default from config: { config["isotope"]})")
 
-    # Plot selection (data mode only)
+    # Verbosity
+    parser.add_argument("-v", "--verbose", action="store_true",
+        help="Enable verbose output: show/save all plots and print progress messages. "
+             "Without this flag only data files and the results .txt are written.")
+
+    # Plot selection (data mode only, only meaningful with --verbose)
     _ALL_PLOTS = ["gf", "fermi", "epsilon", "double_diff"]
     parser.add_argument("--plots", nargs="*", choices=_ALL_PLOTS, metavar="PLOT",
-        help=f"Which plots/computations to run in 'data' mode. "
+        help=f"Which plots to enable in verbose data mode. "
              f"Choices: {_ALL_PLOTS}. "
-             f"Omit flag to run all; pass '--plots' with no arguments to run none (G/H factors and half-life are always computed).")
+             f"Omit flag to run all; pass '--plots' with no arguments to run none. "
+             f"Ignored unless --verbose is set.")
 
 
     args = parser.parse_args()
@@ -116,8 +122,20 @@ def main():
     if args.isotope is not None:
         config["isotope"] = args.isotope
 
-    # Plots override: None means flag was not passed → run all
-    config["plots"] = args.plots if args.plots is not None else _ALL_PLOTS
+    # Verbose flag drives both plot output and terminal verbosity
+    if args.plots is not None and not args.verbose:
+        parser.error(
+            "--plots requires --verbose (-v) to have any effect. "
+            "Re-run with --verbose (-v) to enable plot output."
+        )
+
+    config["verbose"] = args.verbose
+    if args.verbose:
+        # Respect --plots selection; default to all when not specified
+        config["plots"] = args.plots if args.plots is not None else _ALL_PLOTS
+    else:
+        # Quiet mode: suppress all plots regardless of --plots
+        config["plots"] = []
 
 
 
@@ -145,7 +163,7 @@ def main():
         if potential_index == 1:
             print(f"calling '{mode}' function for potential 1: Z/r + V0 exp(-Ar)")
         if potential_index == 2:
-            print(f"calling '{mode}' function for potential 2: (for r<R); Z/2R (3-(r/R)^2) (for r >= R); Z/r")
+            print(f"calling '{mode}' function for potential 2: (for r<R); Z/2R (3-(r/R)^2) , (for r >= R); Z/r")
         if potential_index == 3:
             print(f"calling '{mode}' function for potential 3: Thomas Fermi")
 
@@ -181,14 +199,17 @@ def main():
 
     
     if mode == "generate":
-        print_potential(potential)
-        print(f"Saving output in \\{config["paths"]["output_directory"]} directory")
+        if args.verbose:
+            print_potential(potential)
+            print(f"Saving output in \\{config["paths"]["output_directory"]} directory")
         Generate_Fermi_Data(config,cnf)
     elif mode == "plot":
-        print_potential(potential)
+        if args.verbose:
+            print_potential(potential)
         Visualize(config,cnf)
     elif mode == "data":
-        print_potential(potential)
+        if args.verbose:
+            print_potential(potential)
         calc_double_beta_decay_spectrum(config,cnf)
     elif mode == None:
         iso = config["isotope"]

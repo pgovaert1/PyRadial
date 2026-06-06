@@ -45,29 +45,24 @@ def potential(r, Z, R_au, potential_index, phi_r):
     float or ndarray
         Evaluated potential value(s).
     """
-    Z_sing = Z  # Singular potential term which blows up at r → 0
 
     if potential_index == 0:
         # Coulomb potential
-        return Z_sing / r
+        return Z/ r
 
     elif potential_index == 1:
         # Coulomb + exponential perturbation
         V0 = -1
         A = 1
-        return Z_sing / r + V0 * np.exp(-A * r)
+        return Z / r + V0 * np.exp(-A * r)
 
     elif potential_index == 2:
         # Finite nuclear model (uniform charge distribution)
         r_arr = np.asarray(r, dtype=float)
-        V = Z_sing / r_arr
+        V = Z / r_arr
 
         inside = r_arr < R_au
-        V = np.where(
-            inside,
-            Z_sing / (2 * R_au) * (3 - (r_arr / R_au) ** 2),
-            V
-        )
+        V = np.where(inside, Z / (2 * R_au) * (3 - (r_arr / R_au) ** 2), V)
 
         if np.isscalar(r):
             return float(V)
@@ -1078,7 +1073,6 @@ def Visualize(config,cnf):
 
     r_N = config["mesh_grid"]["num_mesh_steps"]
     r2 = config["mesh_grid"]["second_point"]
-    r0 = 1e-15 ## to avoid 1/r division by 0
     DRN = config["mesh_grid"]["upper_limit_step_size"]#Upper limit on distance between points near the end regime (make sure this stays small enough or wavefunc will not converge at larger distances r)
 
 
@@ -1099,7 +1093,7 @@ def Visualize(config,cnf):
 
     ###Setting up cubic spline
     N_V = 50000
-    r_V = np.linspace(r0,r_END, N_V)
+    r_V = np.linspace(R0,r_END, N_V)
 
     RV = r_V * potential(r_V,Z, R_au, potential_index, phi_r)
 
@@ -1146,11 +1140,13 @@ def Visualize(config,cnf):
     plt.grid(True)
     plt.title(f"E = {T: .2g}, Z = {Z}, A = {N: .5g}, delta = {delta: .3g}, N = {r_N}, DRN = {DRN} , r2 = {r2}, r_end = {r_END}, r_c = {r_c: .3g}")
     plt.legend()
-    plt.show()
+    if config.get("verbose", True):
+        plt.show()
 
 
 def Generate_Fermi_Data(config,cnf):
     ### DECLARE PARAMETERS
+    verbose = config.get("verbose", True)
     A = cnf["A"]
     Zf = cnf["Z"]
     Z = -Zf
@@ -1162,7 +1158,8 @@ def Generate_Fermi_Data(config,cnf):
 
     potential_index = config["generator"]["potential_index"]
     if potential_index == 3:
-        print("calculating thomas fermi func")
+        if verbose:
+            print("calculating thomas fermi func")
         phi_r = make_phi_r(Zf)
     else:
         phi_r = 0
@@ -1191,7 +1188,8 @@ def Generate_Fermi_Data(config,cnf):
         r_N += 10000
         A_grid = ((r_END - (r_N - 1) *r2) / r_END) * (DRN / (DRN -r2))
 
-    print(f"resolution set to {r_N} mesh points")
+    if verbose:
+        print(f"resolution set to {r_N} mesh points")
     mesh_points = radial_grid(r_END, A_grid, r_N, r2, DRN, R_au)
 
     ###Setting up cubic spline
@@ -1204,6 +1202,8 @@ def Generate_Fermi_Data(config,cnf):
     RV = r_V * potential(r_V,Z, R_au, potential_index, phi_r)
 
     RV_spline = CubicSpline(r_V, RV)
+    
+
 
     RV_spline_prime = RV_spline.derivative(1)
     RV_spline_second = RV_spline.derivative(2)
@@ -1216,24 +1216,25 @@ def Generate_Fermi_Data(config,cnf):
 
     for i , sign in enumerate(kappa_sign):
         kappa *= sign
-        print(f"Performing run ({i+1}/{len(kappa_sign)}) with kappa = {kappa:+d} ")
+        if verbose:
+            print(f"Performing run ({i+1}/{len(kappa_sign)}) with kappa = {kappa:+d} ")
         sigma = -np.sign(kappa)
         Lambda = np.sqrt(kappa**2 - (Z/C)**2)
 
 
         P_list = []
         Q_list = []
-        aP_list = []
-        aQ_list = []
 
-        for i, T in enumerate(tqdm(T_range, desc = "Solving Dirac functions over energy range")):
+
+        for i, T in enumerate(tqdm(T_range, desc = f"Solving Dirac functions over energy range for kappa = {kappa:+d}")):
             W = T + C**2
             k = np.sqrt(T*(T + 2*C**2))/C
             eta = ALPHA* Z*W/(k*C)
             Analytic_normalization_const = 1 /Lambda * 1/np.sqrt((Z/C)**2 * (W+C**2)**2 + (kappa + Lambda)**2 *(k*C)**2)
 
-            print(f"Finding wave function for T = {T}, iter = {i}, eta = {eta}")
-            rc_idx = find_rc(mesh_points, k, Z, R_au, potential_index, phi_r, potential)
+            if verbose:
+                print(f"Finding wave function for T = {T}, iter = {i}, eta = {eta}")
+            rc_idx = find_rc(mesh_points, k, Z, R_au, potential_index, phi_r, potential, verbose)
             series_terms_upper, series_terms_lower = calc_series_terms(mesh_points, angular_momentum_quantum_number, T, Z, kappa, sigma, derivatives)
             wave_function_upper, wave_function_lower = solve_power_series(series_terms_upper, series_terms_lower, mesh_points)
             N, delta, r_c = Normalization_Constant(mesh_points, rc_idx ,wave_function_upper,wave_function_lower, Analytic_normalization_const, T, k, eta, W, kappa, Z, Lambda, sigma, R_au, potential_index, phi_r)
@@ -1256,48 +1257,51 @@ def Generate_Fermi_Data(config,cnf):
 
         np.savez_compressed(file_path, T = T_arr, r = r_arr, P = P_arr, Q = Q_arr)
 
-    # ---- Z=0 reference wavefunctions (free particle, V=0) ----
-    main_output_directory = Path(config["paths"]["output_directory"]) / f"Dirac_{config['isotope']}"
-    NPZ_output_directory = main_output_directory / "NPZ_files"
-    NPZ_output_directory.mkdir(parents=True, exist_ok=True)
-    T_arr = np.asarray(T_range, dtype=float)
-    r_arr = np.asarray(mesh_points, dtype=float)
+    if verbose:
+        # ---- Z=0 reference wavefunctions (free particle, V=0) ----
+        # Only generated with --verbose; these files are needed by --mode data
+        # if you want E-function / angular-correlation features.
+        main_output_directory_z0 = Path(config["paths"]["output_directory"]) / f"Dirac_{config['isotope']}"
+        NPZ_output_directory_z0 = main_output_directory_z0 / "NPZ_files"
+        NPZ_output_directory_z0.mkdir(parents=True, exist_ok=True)
+        T_arr_z0 = np.asarray(T_range, dtype=float)
+        r_arr_z0 = np.asarray(mesh_points, dtype=float)
 
-    RV_zero = np.zeros_like(r_V)
-    cs0 = CubicSpline(r_V, RV_zero)
-    derivatives_zero = [cs0, cs0.derivative(1), cs0.derivative(2), cs0.derivative(3)]
+        RV_zero = np.zeros_like(r_V)
+        cs0 = CubicSpline(r_V, RV_zero)
+        derivatives_zero = [cs0, cs0.derivative(1), cs0.derivative(2), cs0.derivative(3)]
 
-    kappa = config["parameters"]["kappa"]
-    for i, sign in enumerate(kappa_sign):
-        kappa *= sign
-        print(f"Z=0 run ({i+1}/{len(kappa_sign)}) with kappa = {kappa:+d}")
-        sigma = -np.sign(kappa)
-        Lambda_z0 = float(abs(kappa))  # sqrt(kappa^2 - 0)
+        kappa = config["parameters"]["kappa"]
+        for i, sign in enumerate(kappa_sign):
+            kappa *= sign
+            print(f"Z=0 run ({i+1}/{len(kappa_sign)}) with kappa = {kappa:+d}")
+            sigma = -np.sign(kappa)
+            Lambda_z0 = float(abs(kappa))  # sqrt(kappa^2 - 0)
 
-        P_list_z0 = []
-        Q_list_z0 = []
+            P_list_z0 = []
+            Q_list_z0 = []
 
-        for _, T in enumerate(tqdm(T_range, desc=f"Z=0 kappa={kappa:+d}")):
-            W = T + C**2
-            k = np.sqrt(T * (T + 2 * C**2)) / C
-            rc_idx = find_rc(mesh_points, k, 0, R_au, 0, 0, potential)
-            series_terms_upper, series_terms_lower = calc_series_terms(
-                mesh_points, angular_momentum_quantum_number, T, 0, kappa, sigma, derivatives_zero)
-            wave_function_upper, wave_function_lower = solve_power_series(
-                series_terms_upper, series_terms_lower, mesh_points)
-            N, _, _ = Normalization_Constant(
-                mesh_points, rc_idx, wave_function_upper, wave_function_lower,
-                0.0, T, k, 0.0, W, kappa, 0, Lambda_z0, sigma, R_au, 0, 0)
+            for _, T in enumerate(tqdm(T_range, desc=f"Z=0 kappa={kappa:+d}")):
+                W = T + C**2
+                k = np.sqrt(T * (T + 2 * C**2)) / C
+                rc_idx = find_rc(mesh_points, k, 0, R_au, 0, 0, potential)
+                series_terms_upper, series_terms_lower = calc_series_terms(
+                    mesh_points, angular_momentum_quantum_number, T, 0, kappa, sigma, derivatives_zero)
+                wave_function_upper, wave_function_lower = solve_power_series(
+                    series_terms_upper, series_terms_lower, mesh_points)
+                N, _, _ = Normalization_Constant(
+                    mesh_points, rc_idx, wave_function_upper, wave_function_lower,
+                    0.0, T, k, 0.0, W, kappa, 0, Lambda_z0, sigma, R_au, 0, 0)
 
-            P_list_z0.append(N * wave_function_upper)
-            Q_list_z0.append(N * wave_function_lower)
+                P_list_z0.append(N * wave_function_upper)
+                Q_list_z0.append(N * wave_function_lower)
 
-        filename_z0 = f"{config['isotope']}_potential_{potential_index}_kappa_{kappa:+d}_Z0_A{A}.npz"
-        file_path_z0 = NPZ_output_directory / filename_z0
-        np.savez_compressed(file_path_z0,
-                            T=T_arr, r=r_arr,
-                            P=np.asarray(P_list_z0, dtype=float),
-                            Q=np.asarray(Q_list_z0, dtype=float))
+            filename_z0 = f"{config['isotope']}_potential_{potential_index}_kappa_{kappa:+d}_Z0_A{A}.npz"
+            file_path_z0 = NPZ_output_directory_z0 / filename_z0
+            np.savez_compressed(file_path_z0,
+                                T=T_arr_z0, r=r_arr_z0,
+                                P=np.asarray(P_list_z0, dtype=float),
+                                Q=np.asarray(Q_list_z0, dtype=float))
 
 
 

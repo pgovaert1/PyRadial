@@ -85,7 +85,7 @@ def Fortran_data():
 
     return g_func, E_values
 
-def find_mesh_point_R_au(grid_points, rN):
+def find_mesh_point_R_au(grid_points, rN, verbose=True):
     """
     Obtains the index and value of r_grid which match the nuclear radius or come closest to it.
 
@@ -95,6 +95,8 @@ def find_mesh_point_R_au(grid_points, rN):
         One dimensional ndarray of the radial grid
     rN : float
         Dimensionless nuclear radius defined as R = 1.2 * A^(1/3) / HBAR_C
+    verbose : bool
+        If True, print the matched mesh point info.
 
     Returns
     -------
@@ -110,12 +112,13 @@ def find_mesh_point_R_au(grid_points, rN):
         if grid_points[i] <= R_au  and grid_points[i+1] > R_au:
             grid_point_R_au = grid_points[i]
             idx_R = i
-            print(f"closest mesh point to R_au = {R_au: .5g} is at i ={idx_R} w/ mesh point value ={grid_point_R_au: .5g}")
+            if verbose:
+                print(f"closest mesh point to R_au = {R_au: .5g} is at i ={idx_R} w/ mesh point value ={grid_point_R_au: .5g}")
             break
     return idx_R, grid_point_R_au
 
 
-def calc_g_and_f(Ee, Z, A, data):
+def calc_g_and_f(Ee, data):
     """
     Calculate the radial Dirac wavefunction components g with kappa = -1 and f with kappa = +1.
 
@@ -128,10 +131,6 @@ def calc_g_and_f(Ee, Z, A, data):
     ----------
     Ee : ndarray
         Total relativsitc energy values.
-    Z : int
-        Atomic number.
-    A : int
-        Mass number.
     data : dict
         Dictionary containing the radial wavefunction data with keys:
 
@@ -169,19 +168,14 @@ def calc_g_and_f(Ee, Z, A, data):
     return g_n1, f_p1
 
 
-
-def Fermi_numerical(Ee, Z, A, data):
+def Fermi_numerical_division(Ee,Z, data):
     """
     Calculate the numerical Fermi function from Dirac radial wavefunctions.
 
     The Fermi function is computed from the radial Dirac components
     g and f evaluated at the nuclear radius,
 
-        F(Z, Ee) = 2 * (g^2 + f^2) / (s + 1)
-
-    where
-
-        s = sqrt(1 - (ALPHA * Z)**2).
+        F(Z, Ee) =  (g^2 + f^2) / (g^2 + f^2)_{Z=0}
 
     Parameters
     ----------
@@ -208,18 +202,77 @@ def Fermi_numerical(Ee, Z, A, data):
     ndarray
         Numerical Fermi function evaluated at Ee.
     """
-    s = np.sqrt(1-(ALPHA * Z)**2)
+
+    
+    T_mesh = data["T"]
+    P_n = data["P_n"]
+    Q_p = data["Q_p"]
+    P_n_Z0 = data["P_n_Z0"]
+    Q_p_Z0 = data["Q_p_Z0"]
+
+    idx_R = data["idx_R"]
+    mesh_point_R_au = data["mesh_point_R_au"]
+
+    data_Z = {"T": T_mesh, "P_n": P_n, "Q_p": Q_p, "idx_R": idx_R, "mesh_point_R_au": mesh_point_R_au}
+    data_Z0 = {"T": T_mesh, "P_n": P_n_Z0, "Q_p": Q_p_Z0, "idx_R": idx_R, "mesh_point_R_au": mesh_point_R_au}
+
+    T = Ee - ME
+    T_MeV = T_mesh * E_HARTREE/1e6
+
+    g, f = calc_g_and_f(Ee, data_Z)
+
+    g0, f0 = calc_g_and_f(Ee, data_Z0)
+
+
+    Fermi_vals = (g**2 + f**2)/(g0**2 + f0**2)
+
+    return np.interp(T, T_MeV, Fermi_vals)
+
+def Fermi_numerical(Ee, Z, data):
+    """
+    Calculate the numerical Fermi function from Dirac radial wavefunctions.
+
+    The Fermi function is computed from the radial Dirac components
+    g and f evaluated at the nuclear radius,
+
+        F(Z, Ee) = (g^2 + f^2)
+
+    Parameters
+    ----------
+    Ee : array_like
+        Total relativistic electron energies in MeV.
+
+    Z : int
+        Atomic number.
+
+    A : int
+        Mass number.
+
+    data : dict
+        Dictionary containing the radial wavefunction data with keys:
+
+        - "T" : kinetic energy mesh
+        - "P_n" : upper radial wavefunction component
+        - "Q_p" : lower radial wavefunction component
+        - "idx_R" : index corresponding to the nuclear radius
+        - "mesh_point_R_au" : nuclear radius mesh point in atomic units
+
+    Returns
+    -------
+    ndarray
+        Numerical Fermi function evaluated at Ee.
+    """
 
     T = Ee - ME
     T_mesh = data["T"]
     T_MeV = T_mesh * E_HARTREE/1e6
 
-    g, f = calc_g_and_f(Ee, Z, A, data)
+    g, f = calc_g_and_f(Ee, data)
 
 
     Fermi_vals = (g**2 + f**2)
 
-    return 2/(s+1) * np.interp(T, T_MeV, Fermi_vals)
+    return np.interp(T, T_MeV, Fermi_vals)
 
 def E_function(Ee, Z, A, data):
     """
@@ -261,7 +314,7 @@ def E_function(Ee, Z, A, data):
     T_mesh = data["T"]
     T_MeV = T_mesh * E_HARTREE/1e6
 
-    g, f = calc_g_and_f(Ee, Z, A, data)
+    g, f = calc_g_and_f(Ee, data)
     E_vals = 2*g * f
 
 
@@ -348,9 +401,9 @@ def plot_f_and_g(Ee, potential_index, cnf, data, output_directory_name):
     scheme = None
     f_analytic = g_analytic = None
 
-    g_numeric, f_numeric = calc_g_and_f(Ee, Z, A, data)
+    g_numeric, f_numeric = calc_g_and_f(Ee, data)
 
-    g_fortran, E_fortran = Fortran_data()
+    # g_fortran, E_fortran = Fortran_data()
 
     if potential_index == 0:
         scheme = "B"
@@ -362,46 +415,46 @@ def plot_f_and_g(Ee, potential_index, cnf, data, output_directory_name):
         kappa_f = 1
 
         #### SIMOKVIC ANALYTIC FORMULA
-        # for i , E in enumerate(Ee):
-        #     p = np.sqrt(E**2 - ME**2)
-        #     eta = ALPHA * Z* E/ p
-        #     gammak = np.sqrt(1 - (ALPHA * Z)**2)
+        for i , E in enumerate(Ee):
+            p = np.sqrt(E**2 - ME**2)
+            eta = ALPHA * Z* E/ p
+            gammak = np.sqrt(1 - (ALPHA * Z)**2)
 
-        #     numerator = np.abs(sp.gamma(1 + gammak + 1j * eta))
-        #     denominator = sp.gamma(1 + 2 * gammak)
-        #     gamma_ratio = numerator/denominator
+            numerator = np.abs(sp.gamma(1 + gammak + 1j * eta))
+            denominator = sp.gamma(1 + 2 * gammak)
+            gamma_ratio = numerator/denominator
 
-        #     sqrt_term_plus = np.sqrt((E + ME) / (2 * E))
-        #     sqrt_term_min = np.sqrt((E - ME) / (2 * E))
+            sqrt_term_plus = np.sqrt((E + ME) / (2 * E))
+            sqrt_term_min = np.sqrt((E - ME) / (2 * E))
 
-        #     exp_zeta_g = np.sqrt((kappa_g - 1j * eta * ME/E) / (gammak - 1j * eta))
-        #     exp_zeta_f = np.sqrt((kappa_f - 1j * eta * ME/E) / (gammak - 1j * eta))
+            exp_zeta_g = np.sqrt((kappa_g - 1j * eta * ME/E) / (gammak - 1j * eta))
+            exp_zeta_f = np.sqrt((kappa_f - 1j * eta * ME/E) / (gammak - 1j * eta))
 
 
-        #     hyp = complex(mp.hyp1f1(gammak - 1j*eta, 1 + 2*gammak, -2*1j*p*rN))
-        #     phase = np.exp(1j*p*rN)
-        #     Im_term = np.imag(phase * exp_zeta_g * hyp )
-        #     Re_term = np.real(phase * exp_zeta_f * hyp)
+            hyp = complex(mp.hyp1f1(gammak - 1j*eta, 1 + 2*gammak, -2*1j*p*rN))
+            phase = np.exp(1j*p*rN)
+            Im_term = np.imag(phase * exp_zeta_g * hyp )
+            Re_term = np.real(phase * exp_zeta_f * hyp)
 
-        #     g_analytic[i] = np.sign(kappa_g) * 1.0/(p*rN) * sqrt_term_plus * gamma_ratio * (2*p*rN)**gammak * np.exp(np.pi * eta/2) * Im_term
-        #     f_analytic[i] = np.sign(kappa_f) * 1.0/(p*rN) * sqrt_term_min * gamma_ratio * (2*p*rN)**gammak * np.exp(np.pi * eta/2) * Re_term
+            g_analytic[i] = np.sign(kappa_g) * 1.0/(p*rN) * sqrt_term_plus * gamma_ratio * (2*p*rN)**gammak * np.exp(np.pi * eta/2) * Im_term
+            f_analytic[i] = np.sign(kappa_f) * 1.0/(p*rN) * sqrt_term_min * gamma_ratio * (2*p*rN)**gammak * np.exp(np.pi * eta/2) * Re_term
 
         #### SAAD ANALYTIC FORMULA
-        _alpha = mp.mpf('1') / mp.mpf(str(C))
-        _me = mp.mpf(str(ME))
-        _Z = mp.mpf(str(Z)) 
+        # _alpha = mp.mpf('1') / mp.mpf(str(C))
+        # _me = mp.mpf(str(ME))
+        # _Z = mp.mpf(str(Z)) 
 
-        for i, E in enumerate(Ee):
-            W = mp.mpf(E)
-            p = mp.sqrt(W**2 - _me**2)
-            eta = _alpha * _Z * W / p
-            S = mp.sqrt(1 - (_alpha * _Z)**2) # kappa^2 hard coded to equal 1
-            nu = mp.arg(_alpha * _Z * (W + _me) - mp.mpc(0, 1) * (kappa_g + S) * p)
-            Ak = -1 * (mp.exp(-mp.pi * eta / 2) * mp.fabs(mp.gamma(S + mp.mpc(0, 1) * eta)) / mp.gamma(2 * S + 1) * (2 * p * rN)**S)
-            Fk = ((S - mp.mpc(0, 1) * eta) * mp.exp(mp.mpc(0, -1) * p * rN + mp.mpc(0, 1) * nu) * mp.hyp1f1(S + 1 + mp.mpc(0, -1) * eta, 2 * S + 1, mp.mpc(0, 2) * p * rN))
-            psi_val = Ak * Fk
-            g_analytic[i] = float(mp.re(psi_val))
-            f_analytic[i] = float(-(p / (W + _me)) * mp.im(psi_val))
+        # for i, E in enumerate(Ee):
+        #     W = mp.mpf(E)
+        #     p = mp.sqrt(W**2 - _me**2)
+        #     eta = _alpha * _Z * W / p
+        #     S = mp.sqrt(1 - (_alpha * _Z)**2) # kappa^2 hard coded to equal 1
+        #     nu = mp.arg(_alpha * _Z * (W + _me) - mp.mpc(0, 1) * (kappa_g + S) * p)
+        #     Ak = -1 * (mp.exp(-mp.pi * eta / 2) * mp.fabs(mp.gamma(S + mp.mpc(0, 1) * eta)) / mp.gamma(2 * S + 1) * (2 * p * rN)**S)
+        #     Fk = ((S - mp.mpc(0, 1) * eta) * mp.exp(mp.mpc(0, -1) * p * rN + mp.mpc(0, 1) * nu) * mp.hyp1f1(S + 1 + mp.mpc(0, -1) * eta, 2 * S + 1, mp.mpc(0, 2) * p * rN))
+        #     psi_val = Ak * Fk
+        #     g_analytic[i] = float(mp.re(psi_val))
+        #     f_analytic[i] = float(-(p / (W + _me)) * mp.im(psi_val))
 
 
     elif potential_index == 2:
@@ -418,26 +471,26 @@ def plot_f_and_g(Ee, potential_index, cnf, data, output_directory_name):
         raise RuntimeError("No proper potential index has been passed")
 
 
-    plt.figure(figsize=(12,8))
-    plt.plot(Ee-ME, g_analytic, lw=1.5, label = "g analytic")
-    plt.xlabel(r"$T$ (MeV)")
-    plt.ylabel(r"$g_{\kappa=-1}(R)$")
-    plt.xlim((Ee-ME)[0], (Ee-ME)[-1])
-    plt.xscale("log")
-    plt.title(f"g wave func comparison, Scheme {scheme}")
-    plt.legend()
-    plt.grid(True)
-    plt.show()
+    # plt.figure(figsize=(12,8))
+    # plt.plot(Ee-ME, g_analytic, lw=1.5, label = "g analytic")
+    # plt.xlabel(r"$T$ (MeV)")
+    # plt.ylabel(r"$g_{\kappa=-1}(R)$")
+    # plt.xlim((Ee-ME)[0], (Ee-ME)[-1])
+    # plt.xscale("log")
+    # plt.title(f"g wave func comparison, Scheme {scheme}")
+    # plt.legend()
+    # plt.grid(True)
+    # plt.show()
 
-    plt.figure(figsize=(12,8))
-    plt.plot(Ee-ME, f_analytic, lw=1.5, label = "f analytic")
-    plt.xlabel(r"$T$ (MeV)")
-    plt.ylabel(r"$f_{\kappa=1}(R)$")
-    plt.xlim((Ee-ME)[0], (Ee-ME)[-1])
-    plt.xscale("log")
-    plt.title(f"f wave func comparison, Scheme {scheme}")
-    plt.legend()
-    plt.show()
+    # plt.figure(figsize=(12,8))
+    # plt.plot(Ee-ME, f_analytic, lw=1.5, label = "f analytic")
+    # plt.xlabel(r"$T$ (MeV)")
+    # plt.ylabel(r"$f_{\kappa=1}(R)$")
+    # plt.xlim((Ee-ME)[0], (Ee-ME)[-1])
+    # plt.xscale("log")
+    # plt.title(f"f wave func comparison, Scheme {scheme}")
+    # plt.legend()
+    # plt.show()
 
 
 
@@ -478,7 +531,7 @@ def plot_f_and_g(Ee, potential_index, cnf, data, output_directory_name):
 
     if g_analytic is not None:
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12,8), sharex=True, gridspec_kw={"height_ratios": [3,1]})
-        ax1.plot(E_fortran, abs(g_fortran), lw=1.5, label = "g Fortran")
+        # ax1.plot(E_fortran, abs(g_fortran), lw=1.5, label = "g Fortran")
         ax1.plot(Ee-ME, abs(g_numeric), lw=1.5, label = "g numeric")
         ax1.plot(Ee-ME, g_analytic, lw=1.5, label = "g analytic")
         ax1.set_ylabel(r"$g_{\kappa=-1}(R)$")
@@ -499,7 +552,7 @@ def plot_f_and_g(Ee, potential_index, cnf, data, output_directory_name):
         plt.show()
     else:
         fig = plt.figure(figsize=(12,8))
-        plt.plot(E_fortran, abs(g_fortran), lw=1.5, label = "g Fortran")
+        # plt.plot(E_fortran, abs(g_fortran), lw=1.5, label = "g Fortran")
         plt.plot(Ee-ME, abs(g_numeric), lw=1.5, label = "g numeric")
         plt.xlabel(r"$T$ (MeV)")
         plt.ylabel(r"$g_{\kappa=-1}(R)$")
