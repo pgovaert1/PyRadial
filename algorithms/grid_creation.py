@@ -121,7 +121,7 @@ def radial_grid(r_END, A_grid, N, r2, DRN, nuc_radius):
 ### Find mminimum range up to which to extend the mesh range used to solve P and Q
 ###################################################################################
 
-def obtain_mesh_range(k, Z, R_au, potential_index, phi_r, potential_function, verbose=False):
+def obtain_mesh_range(k, Z, R_au, potential_index, phi_r, potential_function):
     """
     Find the minimum range needed such that a matching radius rc is included in the radial grid.
     Extending the radial point r_max until asymptotic condition |rV(r) - Z| < EPSILON is satisfied
@@ -164,8 +164,7 @@ def obtain_mesh_range(k, Z, R_au, potential_index, phi_r, potential_function, ve
         r_max *= 2
         RV = r_max* potential_function(r_max, Z, R_au, potential_index, phi_r)
 
-    if verbose:
-        print(f"mesh range set to {r_max}")
+    print(f"mesh range set to {r_max}")
 
     return r_max
 
@@ -175,7 +174,71 @@ def obtain_mesh_range(k, Z, R_au, potential_index, phi_r, potential_function, ve
 ### Find_rc is a function finding the matching radius rc at which one can normalize the power series by matching it witht he asymptotic behavior
 #################################################################################################################################################
 
-def find_rc(r_grid, k, Z , R_au, potential_index, phi_r, potential_function, verbose=False):
+def plot_grid_stepsize():
+    """
+    Plot iteration index vs grid step size for a demonstration grid.
+    Shows the transition from logarithmic (near-origin) to linear (far-field)
+    spacing of the RADIAL-style mesh. For thesis illustration only.
+    """
+    import matplotlib.pyplot as plt
+
+    # Demo parameters — A_grid is derived from these, matching the real code formula
+    N     = 1000   # number of grid points
+    r2    = 0.02   # first step size (a.u.)
+    DRN   = 0.5    # asymptotic (linear) step size (a.u.)
+    r_END = 110.0  # grid endpoint (a.u.)
+
+    A_grid = ((r_END - (N - 1) * r2) / r_END) * (DRN / (DRN - r2))
+
+    x = find_x(A_grid)
+    c = x * r_END
+    b = (x * (c + r_END) * (DRN - r2)) / (DRN * r2)
+    a = (c - b * r2) / (c * r2)
+    d = 1.0 - b * np.log(c)
+
+    def G(r):
+        return a * r + b * np.log(c + r) + d
+
+    # Invert G via dense interpolation — no bisection loop needed
+    r_dense = np.linspace(0.0, r_END, 3_000_000)
+    G_dense = G(r_dense)
+
+    N_actual = int(G(r_END))
+    G_targets = np.arange(1, N_actual + 1, dtype=float)
+    r_grid_demo = np.interp(G_targets, G_dense, r_dense)
+    r_grid_demo[0] = 0.0
+
+    stepsizes = np.diff(r_grid_demo)
+    idx = np.arange(1, len(stepsizes) + 1)
+
+    fig, ax = plt.subplots(figsize=(12,8))
+    ax.plot(idx, stepsizes, color='steelblue', lw=1.0)
+    ax.axhline(y=DRN, color='red', ls='--', lw=1.0, label=f'$\\Delta r_{{\\max}}$ = {DRN} a.u.')
+    ax.set_xlabel('Grid point index $i$', fontsize=12)
+    ax.set_ylabel(r'Step size $\Delta r_i$ (a.u.)', fontsize=12)
+    ax.set_ylim(bottom=0)
+    ax.grid(True, alpha=0.3)
+    ax.legend(fontsize=10)
+
+    # Inset: zoom into the final iterations to show the asymptotic approach
+    n_zoom = 5
+    ax_in = ax.inset_axes([0.12, 0.45, 0.38, 0.45])
+    ax_in.plot(idx[-n_zoom:], stepsizes[-n_zoom:], color='steelblue', lw=1.0)
+    ax_in.axhline(y=DRN, color='red', ls='--', lw=1.0)
+    ax_in.set_xlim(idx[-n_zoom], idx[-1] + 3)
+    y_lo = stepsizes[-n_zoom] * 0.998
+    y_hi = DRN * 1.004
+    ax_in.set_ylim(y_lo, y_hi)
+    ax_in.tick_params(labelsize=7)
+    ax_in.grid(True, alpha=0.3)
+    ax.indicate_inset_zoom(ax_in, edgecolor='grey')
+
+    plt.tight_layout()
+    plt.savefig('grid_stepsize_demo.pdf', bbox_inches='tight')
+    plt.show()
+
+
+def find_rc(r_grid, k, Z , R_au, potential_index, phi_r,potential_function, verbose = False):
     """
     Obtains the ndarray index where the value of r_grid satisfies |rV(r) - Z| < EPSILON
     and k*r_grid > k_min.
@@ -230,5 +293,5 @@ def find_rc(r_grid, k, Z , R_au, potential_index, phi_r, potential_function, ver
     if idx_rc is None:
         raise RuntimeError("No rc found, extend distance")
     if verbose:
-        print(f"rc succesfully found at rc = {r_grid[idx_rc]}")
+        print(f"Matching radius found at r = {r_grid[idx_rc]:.4e} au, index = {idx_rc}, with |rV(r) - Z| = {abs(RV[idx_rc] - Z_inf):.4e} and k*r = {k * r_grid[idx_rc]:.4e}")
     return idx_rc

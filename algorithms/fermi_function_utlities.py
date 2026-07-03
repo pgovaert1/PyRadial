@@ -8,6 +8,14 @@ import os
 import glob, re
 from configurations.physics_constants import ME, ALPHA, HBAR_C, E_HARTREE, AU, C
 
+plt.rcParams.update({
+    "axes.labelsize": 13,
+    "axes.titlesize": 14,
+    "xtick.labelsize": 12,
+    "ytick.labelsize": 12,
+    "legend.fontsize": 12,
+})
+
 
 #### FORTRAN DATA EXTRACTION
 
@@ -163,8 +171,6 @@ def calc_g_and_f(Ee, data):
 
     g_n1 = np.sqrt((Ee + ME)/(2*Ee)) * P_n[:,idx_R] /(p_au * mesh_point_R_au)
     f_p1 = np.sqrt((Ee + ME)/(2*Ee)) * Q_p[:,idx_R] / (p_au * mesh_point_R_au)
-    # g_n1 =  P_n[:,idx_R] #/(p_au * mesh_point_R_au)
-    # f_p1 =  Q_p[:,idx_R] #/ (p_au * mesh_point_R_au)
     return g_n1, f_p1
 
 
@@ -308,8 +314,6 @@ def E_function(Ee, Z, A, data):
     ndarray
         Values of the E function evaluated at Ee.
     """
-    s = np.sqrt(1-(ALPHA * Z)**2)
-
     T = Ee - ME
     T_mesh = data["T"]
     T_MeV = T_mesh * E_HARTREE/1e6
@@ -354,14 +358,43 @@ def Fermi(Ee, Z, A, rN):
     F *= (2 * p * rN)**(2 * (gamma0 - 1)) * np.exp(np.pi * y)
     F *= np.abs(sp.gamma(gamma0 + 1j * y))**2
 
-    firstorder_corr = 6 * p * rN * np.sqrt((1-gamma0)/(1+gamma0)) * (1+gamma0 - 2*gamma0* (p/Ee)**2/3)/((1+ 2*gamma0)*p/Ee)
-
-    secondorder_corr = -(p * rN)**2 * (1-gamma0)/(1+gamma0) * (-2*(1+gamma0)* (5 + 4*gamma0) + (1 + 6*gamma0 + 4*gamma0**2)*(p/Ee)**2)/((1 + 2*gamma0) * p/Ee)**2
-
-    return F #* (1 -firstorder_corr - secondorder_corr)
+    return F
 
 
-def plot_f_and_g(Ee, potential_index, cnf, data, output_directory_name):
+def _plot_wavefunction_component(Ee, numeric, analytic, ylabel, ylim, name, potential_label, output_dir, isotope):
+    T_kinetic = Ee - ME
+    if analytic is not None:
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True, gridspec_kw={"height_ratios": [3, 1]})
+        ax1.plot(T_kinetic, abs(numeric), lw=1.5, label=f"{name} numeric")
+        ax1.plot(T_kinetic, analytic,     lw=1.5, label=f"{name} analytic")
+        ax1.set_ylabel(ylabel)
+        ax1.set_ylim(0, ylim)
+        ax1.set_title(f"{isotope}: {name} wavefunction comparison, {potential_label}")
+        ax1.legend()
+        ax1.grid(True)
+        percent_diff = 100.0 * (abs(numeric) - analytic) / analytic
+        ax2.plot(T_kinetic, percent_diff, lw=1.5)
+        ax2.set_xlabel(r"$T$ (MeV)")
+        ax2.set_ylabel("% diff")
+        ax2.grid(True)
+        ax1.set_xscale("log")
+    else:
+        plt.figure(figsize=(12, 8))
+        plt.plot(T_kinetic, abs(numeric), lw=1.5, label=f"{name} numeric")
+        plt.xlabel(r"$T$ (MeV)")
+        plt.ylabel(ylabel)
+        plt.xlim(T_kinetic[0], T_kinetic[-1])
+        plt.xscale("log")
+        plt.ylim(0, ylim)
+        plt.title(f"{isotope}: {name} wavefunction component comparison, {potential_label}")
+        plt.legend()
+        plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, f"{name}_comparison_{potential_label.replace(' ', '_')}_{isotope}.png"), dpi=300, bbox_inches='tight')
+    plt.show()
+
+
+def plot_f_and_g(Ee, potential_index, cnf, data, output_directory_name, isotope):
     """
     Calculates and plots the numeric and analytic g and f Dirac wave function component for comparison
 
@@ -389,24 +422,22 @@ def plot_f_and_g(Ee, potential_index, cnf, data, output_directory_name):
         - "mesh_point_R_au" : nuclear radius mesh point in atomic units
     output_directory_name : string
         Name of directory to which the plots are saved
-
-
+    isotope : string
+        Isotope name, used in plot titles and filenames to avoid overwriting
+        plots from different isotopes with the same potential index
 
     """
-    Z = cnf["Z"] # Atomic number
-    A = cnf["A"] # Atomic Mass number
-    Q = cnf["Q"] # MeV Q-value
-    rN = 1.2 * A ** (1 / 3) / HBAR_C # Nuclear radius
+    Z = cnf["Z"]
+    A = cnf["A"]
+    rN = 1.2 * A ** (1 / 3) / HBAR_C
 
-    scheme = None
+    potential_label = None
     f_analytic = g_analytic = None
 
     g_numeric, f_numeric = calc_g_and_f(Ee, data)
 
-    # g_fortran, E_fortran = Fortran_data()
-
     if potential_index == 0:
-        scheme = "B"
+        potential_label = "Pure Coulomb"
 
         g_analytic = np.empty_like(Ee, dtype = float)
         f_analytic = np.empty_like(Ee, dtype = float)
@@ -439,130 +470,21 @@ def plot_f_and_g(Ee, potential_index, cnf, data, output_directory_name):
             g_analytic[i] = np.sign(kappa_g) * 1.0/(p*rN) * sqrt_term_plus * gamma_ratio * (2*p*rN)**gammak * np.exp(np.pi * eta/2) * Im_term
             f_analytic[i] = np.sign(kappa_f) * 1.0/(p*rN) * sqrt_term_min * gamma_ratio * (2*p*rN)**gammak * np.exp(np.pi * eta/2) * Re_term
 
-        #### SAAD ANALYTIC FORMULA
-        # _alpha = mp.mpf('1') / mp.mpf(str(C))
-        # _me = mp.mpf(str(ME))
-        # _Z = mp.mpf(str(Z)) 
-
-        # for i, E in enumerate(Ee):
-        #     W = mp.mpf(E)
-        #     p = mp.sqrt(W**2 - _me**2)
-        #     eta = _alpha * _Z * W / p
-        #     S = mp.sqrt(1 - (_alpha * _Z)**2) # kappa^2 hard coded to equal 1
-        #     nu = mp.arg(_alpha * _Z * (W + _me) - mp.mpc(0, 1) * (kappa_g + S) * p)
-        #     Ak = -1 * (mp.exp(-mp.pi * eta / 2) * mp.fabs(mp.gamma(S + mp.mpc(0, 1) * eta)) / mp.gamma(2 * S + 1) * (2 * p * rN)**S)
-        #     Fk = ((S - mp.mpc(0, 1) * eta) * mp.exp(mp.mpc(0, -1) * p * rN + mp.mpc(0, 1) * nu) * mp.hyp1f1(S + 1 + mp.mpc(0, -1) * eta, 2 * S + 1, mp.mpc(0, 2) * p * rN))
-        #     psi_val = Ak * Fk
-        #     g_analytic[i] = float(mp.re(psi_val))
-        #     f_analytic[i] = float(-(p / (W + _me)) * mp.im(psi_val))
-
 
     elif potential_index == 2:
-        scheme = "A"
+        potential_label = "finite nuclear size"
         g_analytic = np.sqrt(Fermi(Ee, Z, A, rN)) * np.sqrt((Ee + ME)/(2*Ee))
         f_analytic = np.sqrt(Fermi(Ee, Z, A, rN)) * np.sqrt((Ee - ME)/ (2*Ee))
 
     elif potential_index == 3:
-        scheme = "C"
+        potential_label = "Thomas-Fermi"
 
 
 
     else:
         raise RuntimeError("No proper potential index has been passed")
 
-
-    # plt.figure(figsize=(12,8))
-    # plt.plot(Ee-ME, g_analytic, lw=1.5, label = "g analytic")
-    # plt.xlabel(r"$T$ (MeV)")
-    # plt.ylabel(r"$g_{\kappa=-1}(R)$")
-    # plt.xlim((Ee-ME)[0], (Ee-ME)[-1])
-    # plt.xscale("log")
-    # plt.title(f"g wave func comparison, Scheme {scheme}")
-    # plt.legend()
-    # plt.grid(True)
-    # plt.show()
-
-    # plt.figure(figsize=(12,8))
-    # plt.plot(Ee-ME, f_analytic, lw=1.5, label = "f analytic")
-    # plt.xlabel(r"$T$ (MeV)")
-    # plt.ylabel(r"$f_{\kappa=1}(R)$")
-    # plt.xlim((Ee-ME)[0], (Ee-ME)[-1])
-    # plt.xscale("log")
-    # plt.title(f"f wave func comparison, Scheme {scheme}")
-    # plt.legend()
-    # plt.show()
-
-
-
-    if f_analytic is not None:
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12,8), sharex=True, gridspec_kw={"height_ratios": [3,1]})
-        ax1.plot(Ee-ME, abs(f_numeric), lw=1.5, label = "f numeric")
-        ax1.plot(Ee-ME, f_analytic, lw=1.5, label = "f analytic")
-        ax1.set_ylabel(r"$f_{\kappa=1}(R)$")
-        ax1.set_ylim(0, 4)
-        ax1.set_title(f"f wave func comparison, Scheme {scheme}")
-        ax1.legend()
-        ax1.grid(True)
-        
-        percent_diff_f = 100.0 * (abs(f_numeric) - f_analytic) / f_analytic
-        ax2.plot(Ee-ME, percent_diff_f, lw=1.5)
-        ax2.set_xlabel(r"$T$ (MeV)")
-        ax2.set_ylabel("% diff")
-        ax2.grid(True)
-        
-        ax1.set_xscale("log")
-        plt.tight_layout()
-        plt.savefig(os.path.join(output_directory_name, f"f_comparison_scheme_{scheme}.png"), dpi = 300)
-        plt.show()
-    else:
-        fig = plt.figure(figsize=(12,8))
-        plt.plot(Ee-ME, abs(f_numeric), lw=1.5, label = "f numeric")
-        plt.xlabel(r"$T$ (MeV)")
-        plt.ylabel(r"$f_{\kappa=1}(R)$")
-        plt.xlim((Ee-ME)[0], (Ee-ME)[-1])
-        plt.xscale("log")
-        plt.ylim(0, 4)
-        plt.title(f"f wave func comparison, Scheme {scheme}")
-        plt.legend()
-        plt.grid(True)
-        plt.savefig(os.path.join(output_directory_name, f"f_comparison_scheme_{scheme}.png"), dpi = 300)
-        plt.show()
-
-
-    if g_analytic is not None:
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12,8), sharex=True, gridspec_kw={"height_ratios": [3,1]})
-        # ax1.plot(E_fortran, abs(g_fortran), lw=1.5, label = "g Fortran")
-        ax1.plot(Ee-ME, abs(g_numeric), lw=1.5, label = "g numeric")
-        ax1.plot(Ee-ME, g_analytic, lw=1.5, label = "g analytic")
-        ax1.set_ylabel(r"$g_{\kappa=-1}(R)$")
-        ax1.set_ylim(0, 20)
-        ax1.set_title(f"g wave func comparison, Scheme {scheme}")
-        ax1.legend()
-        ax1.grid(True)
-        
-        percent_diff_g = 100.0 * (abs(g_numeric) - g_analytic) / g_analytic
-        ax2.plot(Ee-ME, percent_diff_g, lw=1.5)
-        ax2.set_xlabel(r"$T$ (MeV)")
-        ax2.set_ylabel("% diff")
-        ax2.grid(True)
-        
-        ax1.set_xscale("log")
-        plt.tight_layout()
-        plt.savefig(os.path.join(output_directory_name, f"g_comparison_scheme_{scheme}.png"), dpi = 300)
-        plt.show()
-    else:
-        fig = plt.figure(figsize=(12,8))
-        # plt.plot(E_fortran, abs(g_fortran), lw=1.5, label = "g Fortran")
-        plt.plot(Ee-ME, abs(g_numeric), lw=1.5, label = "g numeric")
-        plt.xlabel(r"$T$ (MeV)")
-        plt.ylabel(r"$g_{\kappa=-1}(R)$")
-        plt.xlim((Ee-ME)[0], (Ee-ME)[-1])
-        plt.xscale("log")
-        plt.ylim(0, 20)
-        plt.title(f"g wave func comparison, Scheme {scheme}")
-        plt.legend()
-        plt.grid(True)
-        plt.savefig(os.path.join(output_directory_name, f"g_comparison_scheme_{scheme}.png"), dpi = 300)
-        plt.show()
+    _plot_wavefunction_component(Ee, f_numeric, f_analytic, r"$f_{\kappa=1}(R)$",  4,  "f", potential_label, output_directory_name, isotope)
+    _plot_wavefunction_component(Ee, g_numeric, g_analytic, r"$g_{\kappa=-1}(R)$", 20, "g", potential_label, output_directory_name, isotope)
 
     return None

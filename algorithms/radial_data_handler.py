@@ -6,10 +6,27 @@ from scipy.integrate import quad
 from pathlib import Path
 import os
 from configurations.physics_constants import ME, GF, VUD, HBAR_C, GA, E_HARTREE
-from algorithms.integrands import two_electron_kernel, two_electron_spectrum_integrand, spectrum_epsilon_integrand
+from algorithms.integrands import (two_electron_kernel, two_electron_spectrum_integrand,
+                                    spectrum_epsilon_integrand, single_electron_spectrum_integrand,
+                                    energy_diff_spectrum_integrand,
+                                    double_differential_spectrum_kernel,
+                                    angular_correlation_distribution,
+                                    angular_correlation_weighted_kernel)
 from algorithms.fermi_function_utlities import Fermi, Fermi_numerical, E_function, plot_f_and_g, find_mesh_point_R_au, Fermi_numerical_division
 
-Gbeta = GF * VUD # Effective weak coupling constant in MeV^-2
+plt.rcParams.update({
+    "axes.labelsize": 13,
+    "axes.titlesize": 14,
+    "xtick.labelsize": 12,
+    "ytick.labelsize": 12,
+    "legend.fontsize": 12,
+})
+
+Gbeta = GF * VUD
+
+
+def _gamma_combination(G, xi31, xi51):
+    return G[0] + xi31*G[1] + 1/3*xi31**2*G[3] + (1/3*xi31**2 + xi51)*G[2]
 c2n = ME * (Gbeta * ME ** 2)**4 / (8 * np.pi**7)
 MeVtoyr = (365.25 * 24 * 3600) * 2.998e8 / (1e-15 * HBAR_C)
 
@@ -157,16 +174,11 @@ def compute_and_compare_total_gamma(Q, Fermi_numeric, E_numeric, nuclear_matrix_
         gamma_ps           : Γ from numerical phase-space G combination
         percent_diff       : 100*(gamma_triple - gamma_ps)/gamma_ps
     """
-    from algorithms.integrands import double_differential_spectrum_kernel
-
     xi31 = nuclear_matrix_elements["xi31"]
     xi51 = nuclear_matrix_elements["xi51"]
     G_num = phase_space_data["G_results_num"]  # indices: [G0, G2, G4, G22]
 
-    gamma_ps = (G_num[0]
-                + xi31 * G_num[1]
-                + 1/3 * xi31**2 * G_num[3]
-                + (1/3 * xi31**2 + xi51) * G_num[2])
+    gamma_ps = _gamma_combination(G_num, xi31, xi51)
 
     def integrand(cos_theta, Ee2, Ee1):
         return double_differential_spectrum_kernel(
@@ -211,6 +223,112 @@ def compute_and_compare_total_gamma(Q, Fermi_numeric, E_numeric, nuclear_matrix_
         "gamma_triple_err": gamma_triple_err,
         "gamma_ps":         gamma_ps,
         "percent_diff":     percent_diff,
+    }
+
+
+# ========== DECAY-RATE-WEIGHTED ANGULAR CORRELATION ==========
+
+def compute_kappa_weighted_average(Q, Fermi_numeric, E_numeric, nuclear_matrix_elements, phase_space_data):
+    """
+    Compute the decay-rate-weighted average angular correlation coefficient
+    at three truncation orders of the phase-space polynomial expansion, plus
+    a 'total' value obtained two independent ways for cross-validation.
+
+    ⟨κ²ν⟩ = ∫∫ [dΓ/(dEe1 dEe2)] · κ²ν dEe1 dEe2 / Γ²ν
+
+    The truncation order governs which polynomial terms are included in the
+    dΓ integration weight (and, for 'total', whether the full κ²ν ratio
+    or its LO approximation is used):
+
+      LO    : κ²ν ratio = 1,    weight = G0/H0 only   → −H0 / G0
+      1st   : κ²ν ratio = 1,    weight includes ξ31    → −(H0+ξ31·H2)/(G0+ξ31·G2)
+      total (formula)  : full κ²ν ratio, Γ_full from the G0..G22 combination
+                          (4 pre-computed tagged integrals, reused from phase_space_data)
+      total (direct)   : full κ²ν ratio, Γ_full from one direct integral of the
+                          untagged two-electron kernel over the same (Ee1, Ee2) domain
+
+    The two 'total' variants integrate the same numerator
+    (angular_correlation_weighted_kernel) over identical bounds; they only
+    differ in how the normalizing Γ²ν is obtained, so agreement between them
+    is a consistency check on the G0..G22 combination formula.
+
+    Parameters
+    ----------
+    Q : float
+        Q-value of the decay (MeV).
+    Fermi_numeric : callable
+        Scalar Fermi function F(Ee).
+    E_numeric : callable
+        Scalar E-function E(Ee) = 2·g·f from Dirac wavefunctions.
+    nuclear_matrix_elements : dict
+        Must contain 'xi31' and 'xi51'.
+    phase_space_data : dict
+        Output of calculate_phase_space_factors; must contain
+        'G_results_num' and 'H_results_num' (indices: [G0,G2,G4,G22]).
+
+    Returns
+    -------
+    dict
+        kappa_LO, kappa_1st,
+        kappa_total, kappa_total_err (formula-based Γ²ν),
+        kappa_direct, kappa_direct_err (direct-integral Γ²ν),
+        gamma_formula, gamma_direct, gamma_percent_diff
+    """
+    xi31 = nuclear_matrix_elements["xi31"]
+    xi51 = nuclear_matrix_elements["xi51"]
+    G = phase_space_data["G_results_num"]  # [G0, G2, G4, G22]
+    H = phase_space_data["H_results_num"]  # [H0, H2, H4, H22]
+
+    kappa_LO  = -H[0] / G[0]
+    kappa_1st = -(H[0] + xi31 * H[1]) / (G[0] + xi31 * G[1])
+
+    gamma_formula = _gamma_combination(G, xi31, xi51)
+
+    def bounds_Ee2(Ee1):
+        return [ME, Q + 2.0 * ME - Ee1]
+
+    bounds_Ee1 = [ME, Q + ME]
+    opts_Ee1 = {"epsabs": 1e-18, "epsrel": 1e-16, "limit": 50000,
+                "points": [ME, Q / 2 + ME, Q + ME]}
+    opts_Ee2 = {"epsabs": 1e-18, "epsrel": 1e-16, "limit": 50000, "points": [ME]}
+
+    numerator, numerator_err = nquad(
+        lambda Ee2, Ee1: angular_correlation_weighted_kernel(
+            Ee1, Ee2, Q, Fermi_numeric, E_numeric, nuclear_matrix_elements
+        ),
+        [bounds_Ee2, bounds_Ee1],
+        opts=[opts_Ee2, opts_Ee1]
+    )[:2]
+
+    # Direct method: Γ²ν from a single integral of the untagged kernel over
+    # the same domain, instead of combining the 4 separately-tagged G integrals.
+    gamma_direct, gamma_direct_err = nquad(
+        two_electron_spectrum_integrand(None, Q, Fermi_numeric, nuclear_matrix_elements),
+        [bounds_Ee2, bounds_Ee1],
+        opts=[opts_Ee2, opts_Ee1]
+    )[:2]
+
+    kappa_total     = numerator / gamma_formula
+    kappa_total_err = abs(numerator_err / gamma_formula)
+
+    kappa_direct     = numerator / gamma_direct
+    kappa_direct_err = abs(numerator_err / gamma_direct)
+
+    gamma_percent_diff = 100.0 * (gamma_direct - gamma_formula) / gamma_formula
+    kappa_percent_diff = 100.0 * (kappa_direct - kappa_total) / kappa_total
+
+    return {
+        "kappa_LO":           kappa_LO,
+        "kappa_1st":          kappa_1st,
+        "kappa_total":        kappa_total,
+        "kappa_total_err":    kappa_total_err,
+        "kappa_direct":       kappa_direct,
+        "kappa_direct_err":   kappa_direct_err,
+        "kappa_percent_diff": kappa_percent_diff,
+        "gamma_formula":      gamma_formula,
+        "gamma_direct":       gamma_direct,
+        "gamma_direct_err":   gamma_direct_err,
+        "gamma_percent_diff": gamma_percent_diff,
     }
 
 
@@ -274,8 +392,6 @@ def save_triple_differential_grid(Q, Fermi_numeric, E_numeric, nuclear_matrix_el
     n_cos : int
         Number of grid points along the cos(θ) axis.
     """
-    from algorithms.integrands import double_differential_spectrum_kernel
-
     Ee1_grid = np.linspace(ME + 1e-3, Q + ME, n_Ee)
     Ee2_grid = np.linspace(ME + 1e-3, Q + ME, n_Ee)
     cos_grid = np.linspace(-1.0, 1.0, n_cos)
@@ -297,7 +413,7 @@ def save_triple_differential_grid(Q, Fermi_numeric, E_numeric, nuclear_matrix_el
 
 # ========== FERMI FUNCTION PLOTTING ==========
 
-def plot_fermi_function(Q, Z, A, rN, data, plots_output_directory, potential_index):
+def plot_fermi_function(Q, Z, A, rN, data, plots_output_directory, potential_index, isotope):
     """
     Plot analytical vs numerical Fermi functions.
 
@@ -317,8 +433,12 @@ def plot_fermi_function(Q, Z, A, rN, data, plots_output_directory, potential_ind
         Directory to save plots.
     potential_index : int
         Index specifying which potential model is used.
+    isotope : str
+        Isotope name, used in plot titles.
     """
     show_analytic = (potential_index == 0)
+    potential_names = {0: "Pure Coulomb", 2: "finite sized nucleus", 3: "Thomas-Fermi"}
+    potential_label = potential_names.get(potential_index)
 
     x_plot = np.linspace(ME + 1e-3, Q + ME, 2000)
     Numeric_fermi_plot = Fermi_numerical(x_plot, Z, data)
@@ -329,15 +449,17 @@ def plot_fermi_function(Q, Z, A, rN, data, plots_output_directory, potential_ind
     if show_analytic:
         Analytic_fermi_plot = Fermi(x_plot, Z, A, rN)
 
-    fortran_dat_path = os.path.join(os.path.dirname(__file__), '..', 'out_fortran', 'FermiN.dat')
+    fortran_dirs = {0: 'out_fortran', 2: 'fortran_output_finite_size', 3: 'fortran_output_thomas_fermi'}
+    fortran_dir = fortran_dirs.get(potential_index)
+    fortran_dat_path = os.path.join(os.path.dirname(__file__), '..', fortran_dir, 'FermiN.dat') if fortran_dir else None
     fortran_energies, fortran_fermi = None, None
-    if os.path.isfile(fortran_dat_path):
+    if fortran_dat_path is not None and os.path.isfile(fortran_dat_path):
         raw = np.loadtxt(fortran_dat_path, comments='#')
         # FermiN.dat stores kinetic energies; convert to total energy
         fortran_energies = raw[:, 0] + ME
         fortran_fermi = raw[:, 1]
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True, gridspec_kw={"height_ratios": [3, 1]})
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10), sharex=True, gridspec_kw={"height_ratios": [3, 1]})
 
     # Top plot: comparison
     if show_analytic:
@@ -348,7 +470,10 @@ def plot_fermi_function(Q, Z, A, rN, data, plots_output_directory, potential_ind
     if fortran_energies is not None:
         ax1.plot(fortran_energies, fortran_fermi, lw=1.5, ls='--', label='FORTRAN (FermiN.dat)')
     ax1.set_ylabel('Fermi Function Value')
-    ax1.set_title('Fermi Function vs Electron Energy')
+    title = f'{isotope}: Fermi Function vs Electron Energy'
+    if potential_label:
+        title += f' ({potential_label})'
+    ax1.set_title(title)
     ax1.grid(True)
     ax1.legend()
 
@@ -374,7 +499,7 @@ def plot_fermi_function(Q, Z, A, rN, data, plots_output_directory, potential_ind
     ax2.grid(True)
 
     plt.tight_layout()
-    plt.savefig(os.path.join(plots_output_directory, f"Fermi_Function_potential_{potential_index}_Z{Z}_A{A}.png"), dpi=300)
+    plt.savefig(os.path.join(plots_output_directory, f"Fermi_Function_potential_{potential_index}_Z{Z}_A{A}.png"), dpi=300, bbox_inches='tight')
     plt.show()
 
 
@@ -382,7 +507,7 @@ def plot_fermi_function(Q, Z, A, rN, data, plots_output_directory, potential_ind
 
 # ========== SPECTRUM CALCULATION AND PLOTTING ==========
 
-def calculate_and_plot_spectra(Q, Z, A, Fermi_analytic, Fermi_numeric, plots_output_directory, potential_index, nuclear_matrix_elements):
+def calculate_and_plot_spectra(Q, Z, A, Fermi_analytic, Fermi_numeric, plots_output_directory, potential_index, nuclear_matrix_elements, isotope):
     """
     Calculate and plot 2νββ epsilon spectrum.
 
@@ -402,6 +527,8 @@ def calculate_and_plot_spectra(Q, Z, A, Fermi_analytic, Fermi_numeric, plots_out
         Directory to save plots.
     potential_index : int
         Index specifying which potential model is used.
+    isotope : str
+        Isotope name, used in plot titles.
 
     Returns
     -------
@@ -409,6 +536,8 @@ def calculate_and_plot_spectra(Q, Z, A, Fermi_analytic, Fermi_numeric, plots_out
         Dictionary containing spectrum data and rates
     """
     show_analytic = (potential_index == 0)
+    potential_names = {0: "Pure Coulomb", 2: "Finite-Sized Nucleus", 3: "Thomas-Fermi"}
+    potential_label = potential_names.get(potential_index, f"Potential {potential_index}")
 
     eps_grid = np.linspace(0.0, Q, 400)
     spectrum_vals_num = np.array([spectrum_epsilon_integrand(eps, Q, Fermi_numeric, nuclear_matrix_elements) for eps in eps_grid])
@@ -422,7 +551,7 @@ def calculate_and_plot_spectra(Q, Z, A, Fermi_analytic, Fermi_numeric, plots_out
         ax1.plot(eps_grid, spectrum_vals, lw=1.5, label="Pure Coulomb Analytic")
         ax1.plot(eps_grid, spectrum_vals_num, lw=1.5, label="Numerical")
         ax1.set_ylabel('dΓ/dε (1/yr per MeV)')
-        ax1.set_title('2νββ Spectrum vs epsilon')
+        ax1.set_title(f'{isotope}: 2νββ Spectrum vs epsilon ({potential_label})')
         ax1.legend()
         ax1.grid(True)
         percent_diff_eps = 100.0 * (spectrum_vals_num - spectrum_vals) / spectrum_vals
@@ -435,12 +564,12 @@ def calculate_and_plot_spectra(Q, Z, A, Fermi_analytic, Fermi_numeric, plots_out
         ax1.plot(eps_grid, spectrum_vals_num, lw=1.5, label="Numerical")
         ax1.set_xlabel('epsilon = Ee1 + Ee2 − 2 me (MeV)')
         ax1.set_ylabel('dΓ/dε (1/yr per MeV)')
-        ax1.set_title('2νββ Spectrum vs epsilon')
+        ax1.set_title(f'{isotope}: 2νββ Spectrum vs epsilon ({potential_label})')
         ax1.legend()
         ax1.grid(True)
 
     plt.tight_layout()
-    plt.savefig(os.path.join(plots_output_directory, f"Spectrum_potential_{potential_index}_Z{Z}_A{A}.png"), dpi=300)
+    plt.savefig(os.path.join(plots_output_directory, f"Spectrum_potential_{potential_index}_Z{Z}_A{A}.png"), dpi=300, bbox_inches='tight')
     plt.show()
 
     # ========== Calculate total rates ==========
@@ -462,7 +591,7 @@ def calculate_and_plot_spectra(Q, Z, A, Fermi_analytic, Fermi_numeric, plots_out
     plt.plot(eps_grid, spec_vals_norm_num, lw=1.5, label="Numeric")
     plt.xlabel('epsilon = Ee1 + Ee2 − 2 me (MeV)')
     plt.ylabel('1/Γ dΓ/dε')
-    plt.title("Normalized 2νββ Spectrum")
+    plt.title(f"{isotope}: Normalized 2νββ Spectrum ({potential_label})")
     plt.legend()
     plt.grid(True)
     plt.show()
@@ -484,9 +613,122 @@ def calculate_and_plot_spectra(Q, Z, A, Fermi_analytic, Fermi_numeric, plots_out
         "total_err_num": total_err_num,
     }
 
+# ========== dGamma/dEe SINGLE-ELECTRON SPECTRUM CALCULATION AND PLOTTING ==========
+
+def calculate_and_plot_single_electron_spectra(Q, Z, A, Fermi_analytic, Fermi_numeric,
+                                               plots_output_directory, potential_index,
+                                               nuclear_matrix_elements, isotope):
+    """
+    Calculate and plot single-electron energy spectra dΓ/dEe1 and dΓ/dEe2.
+
+    Each marginal is obtained by integrating two_electron_kernel over the
+    opposite electron energy (cos(θ) drops out upon integration over [-1,1]).
+    Both spectra are identical by kernel symmetry — plotting them overlaid
+    serves as a sanity check.
+
+    Parameters
+    ----------
+    Q : float
+        Q-value of the decay process (MeV).
+    Z : int
+        Atomic number.
+    A : int
+        Mass number.
+    Fermi_analytic : callable
+        Analytic Fermi function (pure Coulomb).
+    Fermi_numeric : callable
+        Numerical Fermi function from Dirac solutions.
+    plots_output_directory : str or Path
+        Directory to save plots.
+    potential_index : int
+        Index specifying which potential model is used.
+    nuclear_matrix_elements : dict
+        Nuclear matrix elements for the selected isotope.
+    isotope : str
+        Isotope name, used in plot titles.
+    """
+    from configurations.physics_constants import ME as _ME
+    show_analytic = (potential_index == 0)
+    potential_names = {0: "Pure Coulomb", 2: "Finite-Sized Nucleus", 3: "Thomas-Fermi"}
+    potential_label = potential_names.get(potential_index, f"Potential {potential_index}")
+
+    T_grid = np.linspace(1e-3, Q, 200)
+    Ee_grid = T_grid + _ME
+
+    spec_Ee1_num = np.array([single_electron_spectrum_integrand(Ee, Q, Fermi_numeric, nuclear_matrix_elements)
+                              for Ee in Ee_grid])
+    spec_Ee2_num = np.array([single_electron_spectrum_integrand(Ee, Q, Fermi_numeric, nuclear_matrix_elements)
+                              for Ee in Ee_grid])
+
+    spec_Ee1_ana = np.zeros_like(spec_Ee1_num)
+    if show_analytic:
+        spec_Ee1_ana = np.array([single_electron_spectrum_integrand(Ee, Q, Fermi_analytic, nuclear_matrix_elements)
+                                  for Ee in Ee_grid])
+
+    # ========== Figure 1: dΓ/dEe ==========
+    fig, ax1 = plt.subplots(1, 1, figsize=(12, 5))
+    if show_analytic:
+        ax1.plot(T_grid, spec_Ee1_ana, lw=1.5, label="Pure Coulomb Analytic")
+    ax1.plot(T_grid, spec_Ee1_num, lw=1.5, label=r"Numeric $d\Gamma/dE_{e_1}$", ls='-')
+    ax1.plot(T_grid, spec_Ee2_num, lw=1.5, label=r"Numeric $d\Gamma/dE_{e_2}$", ls='--')
+    ax1.set_xlabel(r"Kinetic energy $T = E_e - m_e$ (MeV)")
+    ax1.set_ylabel(r"$d\Gamma/dE_e$ (1/yr per MeV)")
+    ax1.set_title(rf"{isotope}: Single-Electron Spectrum $d\Gamma/dE_e$ ({potential_label})")
+    ax1.legend()
+    ax1.grid(True)
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(plots_output_directory,
+                             f"Single_Electron_Spectrum_potential_{potential_index}_Z{Z}_A{A}.png"),
+                dpi=300, bbox_inches='tight')
+    plt.show()
+
+    # ========== Total rate and normalisation ==========
+    total_rate_num, _ = quad(
+        lambda Ee: single_electron_spectrum_integrand(Ee, Q, Fermi_numeric, nuclear_matrix_elements),
+        _ME, Q + _ME,
+        epsabs=1e-18, epsrel=1e-16, limit=20000, points=[_ME, _ME + Q / 2.0, _ME + Q],
+    )
+    if show_analytic:
+        total_rate_ana, _ = quad(
+            lambda Ee: single_electron_spectrum_integrand(Ee, Q, Fermi_analytic, nuclear_matrix_elements),
+            _ME, Q + _ME,
+            epsabs=1e-18, epsrel=1e-16, limit=20000, points=[_ME, _ME + Q / 2.0, _ME + Q],
+        )
+    else:
+        total_rate_ana = None
+
+    # ========== Figure 2: normalized spectrum ==========
+    norm_num = spec_Ee1_num / total_rate_num
+    norm_ana = spec_Ee1_ana / total_rate_ana if show_analytic and total_rate_ana else None
+
+    fig, ax1 = plt.subplots(1, 1, figsize=(12, 5))
+    # if norm_ana is not None:
+    #     ax1.plot(T_grid, norm_ana, lw=1.5, label="Analytic")
+    ax1.plot(T_grid, norm_num, lw=1.5, label="Numeric")
+    ax1.set_xlabel(r"Kinetic energy $T = E_e - m_e$ (MeV)")
+    ax1.set_ylabel(r"$1/\Gamma\;d\Gamma/dE_e$")
+    ax1.set_title(f"{isotope}: Normalized Single-Electron Spectrum ({potential_label})")
+    ax1.legend()
+    ax1.grid(True)
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(plots_output_directory,
+                             f"Single_Electron_Spectrum_normalized_potential_{potential_index}_Z{Z}_A{A}.png"),
+                dpi=300, bbox_inches='tight')
+    plt.show()
+
+    norm_check_num = np.trapezoid(norm_num, T_grid)
+    if norm_ana is not None:
+        norm_check_ana = np.trapezoid(norm_ana, T_grid)
+        print(f"Normalization check - Analytic: {norm_check_ana:.10g}, Numeric: {norm_check_num:.10g}")
+    else:
+        print(f"Normalization check - Numeric: {norm_check_num:.10g}")
+
+
 # ========== dGamma/dEe1dEe2dcos(θ) SPECTRUM CALCULATION AND PLOTTING ==========
 
-def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fermi_numeric, E_function_numeric, plots_output_directory, potential_index, nuclear_matrix_elements, phase_space_data=None):
+def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fermi_numeric, E_function_numeric, plots_output_directory, potential_index, nuclear_matrix_elements, isotope, phase_space_data=None):
     """
     Calculate and plot the double-differential spectrum dΓ/dEe1dEe2 for 2νββ decay.
     
@@ -526,6 +768,8 @@ def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fer
         Index specifying which potential model is used.
     nuclear_matrix_elements : dict
         Dictionary containing nuclear matrix elements needed for spectrum calculation.
+    isotope : str
+        Isotope name, used in plot titles.
 
     Returns
     -------
@@ -545,9 +789,8 @@ def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fer
     """
     
     show_analytic = (potential_index == 0)
-
-    # Import integrand functions
-    from algorithms.integrands import triple_differential_spectrum_integrand_cos_theta, triple_differential_spectrum_integrand_ee1, triple_differential_spectrum_integrand_ee2
+    potential_names = {0: "Pure Coulomb", 2: "Finite-Sized Nucleus", 3: "Thomas-Fermi"}
+    potential_label = potential_names.get(potential_index, f"Potential {potential_index}")
 
     # ========== DEFINE EVALUATION GRIDS ==========
     Ee1_grid = np.linspace(ME + 1e-3, Q + ME, 40)
@@ -570,16 +813,16 @@ def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fer
                 continue
             for k, cos_theta in enumerate(cos_theta_grid):
                 if show_analytic:
-                    spec_val_analytic = triple_differential_spectrum_integrand_cos_theta(
-                        cos_theta, Ee1, Ee2, Q,
+                    spec_val_analytic = double_differential_spectrum_kernel(
+                        Ee1, Ee2, cos_theta, Q,
                         fermi_func=Fermi_analytic,
                         E_func=lambda Ee: 0.0,
                         nuclear_matrix_elements=nuclear_matrix_elements
                     )
                     spectrum_triple_diff_analytic[i, j, k] = max(spec_val_analytic, 0.0)
 
-                spec_val_numeric = triple_differential_spectrum_integrand_cos_theta(
-                    cos_theta, Ee1, Ee2, Q,
+                spec_val_numeric = double_differential_spectrum_kernel(
+                    Ee1, Ee2, cos_theta, Q,
                     fermi_func=Fermi_numeric,
                     E_func=E_function_numeric,
                     nuclear_matrix_elements=nuclear_matrix_elements
@@ -603,8 +846,8 @@ def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fer
                 continue
 
             if show_analytic:
-                integrand_analytic = lambda cos_theta: triple_differential_spectrum_integrand_cos_theta(
-                    cos_theta, Ee1, Ee2, Q,
+                integrand_analytic = lambda cos_theta: double_differential_spectrum_kernel(
+                    Ee1, Ee2, cos_theta, Q,
                     fermi_func=Fermi_analytic,
                     E_func=lambda Ee: 0.0,
                     nuclear_matrix_elements=nuclear_matrix_elements
@@ -614,8 +857,8 @@ def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fer
                                             limit=limit_angle, points=[0.0])
                 spectrum_double_diff_analytic[i, j] = max(integral_analytic, 0.0)
 
-            integrand_numeric = lambda cos_theta: triple_differential_spectrum_integrand_cos_theta(
-                cos_theta, Ee1, Ee2, Q,
+            integrand_numeric = lambda cos_theta: double_differential_spectrum_kernel(
+                Ee1, Ee2, cos_theta, Q,
                 fermi_func=Fermi_numeric,
                 E_func=E_function_numeric,
                 nuclear_matrix_elements=nuclear_matrix_elements
@@ -628,7 +871,6 @@ def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fer
     # ========== COMPUTE DIRECT SPECTRUM USING two_electron_kernel ==========
     print("Computing direct two-electron kernel spectrum for verification...")
     spectrum_direct_numeric = np.zeros((len(Ee1_grid), len(Ee2_grid)))
-    spectrum_direct_analytic = np.zeros_like(spectrum_direct_numeric)
 
     for i, Ee1 in enumerate(Ee1_grid):
         if i % 5 == 0:
@@ -636,12 +878,6 @@ def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fer
         for j, Ee2 in enumerate(Ee2_grid):
             if Ee1 + Ee2 > Q + 2*ME:
                 continue
-            if show_analytic:
-                spectrum_direct_analytic[i, j] = two_electron_kernel(
-                    Ee1, Ee2, Q, tag=None,
-                    fermi_func=Fermi_analytic,
-                    nuclear_matrix_elements=nuclear_matrix_elements
-                )
             spectrum_direct_numeric[i, j] = two_electron_kernel(
                 Ee1, Ee2, Q, tag=None,
                 fermi_func=Fermi_numeric,
@@ -652,50 +888,44 @@ def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fer
     print("\nGenerating double-differential spectrum contour plots...")
 
     if show_analytic:
-        fig, axes = plt.subplots(1, 4, figsize=(18, 5))
-        fig.suptitle(f'dΓ/(dEe1 dEe2) - Potential {potential_index}', fontsize=14)
+        fig, axes = plt.subplots(1, 3, figsize=(14, 5))
+        fig.suptitle(rf'{isotope}: $d\Gamma/(dE_{{e_1}}\,dE_{{e_2}})$ - {potential_label}', fontsize=14)
 
         ax_a = axes[0]
         contour_a = ax_a.contourf(Ee2_grid, Ee1_grid, spectrum_double_diff_analytic, levels=15, cmap='viridis')
-        ax_a.set_xlabel('Ee2 (MeV)'); ax_a.set_ylabel('Ee1 (MeV)')
+        ax_a.set_xlabel(r'$E_{e_2}$ (MeV)'); ax_a.set_ylabel(r'$E_{e_1}$ (MeV)')
         ax_a.set_title('Analytic Fermi\n(Integrated over cos(θ))')
-        plt.colorbar(contour_a, ax=ax_a).set_label('dΓ/(dEe1 dEe2)')
+        plt.colorbar(contour_a, ax=ax_a).set_label(r'$d\Gamma/(dE_{e_1}\,dE_{e_2})$')
 
         ax_n = axes[1]
         contour_n = ax_n.contourf(Ee2_grid, Ee1_grid, spectrum_double_diff_numeric, levels=15, cmap='viridis')
-        ax_n.set_xlabel('Ee2 (MeV)'); ax_n.set_ylabel('Ee1 (MeV)')
+        ax_n.set_xlabel(r'$E_{e_2}$ (MeV)'); ax_n.set_ylabel(r'$E_{e_1}$ (MeV)')
         ax_n.set_title('Numeric Fermi\n(Integrated over cos(θ))')
-        plt.colorbar(contour_n, ax=ax_n).set_label('dΓ/(dEe1 dEe2)')
+        plt.colorbar(contour_n, ax=ax_n).set_label(r'$d\Gamma/(dE_{e_1}\,dE_{e_2})$')
 
-        ax_dn = axes[2]
-        contour_dn = ax_dn.contourf(Ee2_grid, Ee1_grid, spectrum_direct_analytic, levels=15, cmap='viridis')
-        ax_dn.set_xlabel('Ee2 (MeV)'); ax_dn.set_ylabel('Ee1 (MeV)')
-        ax_dn.set_title('Analytic Fermi\n(Direct two_electron_kernel)')
-        plt.colorbar(contour_dn, ax=ax_dn).set_label('dΓ/(dEe1 dEe2)')
-
-        ax_d = axes[3]
+        ax_d = axes[2]
         contour_d = ax_d.contourf(Ee2_grid, Ee1_grid, spectrum_direct_numeric, levels=15, cmap='viridis')
-        ax_d.set_xlabel('Ee2 (MeV)'); ax_d.set_ylabel('Ee1 (MeV)')
+        ax_d.set_xlabel(r'$E_{e_2}$ (MeV)'); ax_d.set_ylabel(r'$E_{e_1}$ (MeV)')
         ax_d.set_title('Numeric Fermi\n(Direct two_electron_kernel)')
-        plt.colorbar(contour_d, ax=ax_d).set_label('dΓ/(dEe1 dEe2)')
+        plt.colorbar(contour_d, ax=ax_d).set_label(r'$d\Gamma/(dE_{e_1}\,dE_{e_2})$')
     else:
         fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-        fig.suptitle(f'dΓ/(dEe1 dEe2) - Potential {potential_index}', fontsize=14)
+        fig.suptitle(rf'{isotope}: $d\Gamma/(dE_{{e_1}}\,dE_{{e_2}})$ - {potential_label}', fontsize=14)
 
         ax_n = axes[0]
         contour_n = ax_n.contourf(Ee2_grid, Ee1_grid, spectrum_double_diff_numeric, levels=15, cmap='viridis')
-        ax_n.set_xlabel('Ee2 (MeV)'); ax_n.set_ylabel('Ee1 (MeV)')
+        ax_n.set_xlabel(r'$E_{e_2}$ (MeV)'); ax_n.set_ylabel(r'$E_{e_1}$ (MeV)')
         ax_n.set_title('Numeric Fermi\n(Integrated over cos(θ))')
-        plt.colorbar(contour_n, ax=ax_n).set_label('dΓ/(dEe1 dEe2)')
+        plt.colorbar(contour_n, ax=ax_n).set_label(r'$d\Gamma/(dE_{e_1}\,dE_{e_2})$')
 
         ax_d = axes[1]
         contour_d = ax_d.contourf(Ee2_grid, Ee1_grid, spectrum_direct_numeric, levels=15, cmap='viridis')
-        ax_d.set_xlabel('Ee2 (MeV)'); ax_d.set_ylabel('Ee1 (MeV)')
+        ax_d.set_xlabel(r'$E_{e_2}$ (MeV)'); ax_d.set_ylabel(r'$E_{e_1}$ (MeV)')
         ax_d.set_title('Numeric Fermi\n(Direct two_electron_kernel)')
-        plt.colorbar(contour_d, ax=ax_d).set_label('dΓ/(dEe1 dEe2)')
+        plt.colorbar(contour_d, ax=ax_d).set_label(r'$d\Gamma/(dE_{e_1}\,dE_{e_2})$')
 
     plt.tight_layout()
-    plt.savefig(os.path.join(plots_output_directory, f"DoublesDiff_Spectrum_potential_{potential_index}_Z{Z}_A{A}.png"), dpi=300)
+    plt.savefig(os.path.join(plots_output_directory, f"DoublesDiff_Spectrum_potential_{potential_index}_Z{Z}_A{A}.png"), dpi=300, bbox_inches='tight')
     plt.show()
 
     # ========== PLOT 1b: NORMALIZED BY Γ^{2ν} ==========
@@ -703,43 +933,77 @@ def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fer
         xi31 = nuclear_matrix_elements["xi31"]
         xi51 = nuclear_matrix_elements["xi51"]
         G_num = phase_space_data["G_results_num"]
-        gamma_2nu_numeric = G_num[0] + xi31*G_num[1] + 1/3*xi31**2*G_num[3] + (1/3*xi31**2 + xi51)*G_num[2]
+        gamma_2nu_numeric = _gamma_combination(G_num, xi31, xi51)
 
         spec_norm_numeric = spectrum_double_diff_numeric / gamma_2nu_numeric
         spec_norm_direct  = spectrum_direct_numeric      / gamma_2nu_numeric
 
         if show_analytic:
             G = phase_space_data["G_results"]
-            gamma_2nu_analytic = G[0] + xi31*G[1] + 1/3*xi31**2*G[3] + (1/3*xi31**2 + xi51)*G[2]
+            gamma_2nu_analytic = _gamma_combination(G, xi31, xi51)
             spec_norm_analytic = spectrum_double_diff_analytic / gamma_2nu_analytic
 
             fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-            fig.suptitle(f'Normalized: dΓ/(dEe1 dEe2) / Γ^{{2ν}} — Potential {potential_index}', fontsize=14)
+            fig.suptitle(rf'{isotope}: Normalized: $d\Gamma/(dE_{{e_1}}\,dE_{{e_2}})\,/\,\Gamma^{{2\nu}}$ — {potential_label}', fontsize=14)
 
             ax_a = axes[0]
             contour_a = ax_a.contourf(Ee2_grid, Ee1_grid, spec_norm_analytic, levels=15, cmap='viridis')
-            ax_a.set_xlabel('Ee2 (MeV)'); ax_a.set_ylabel('Ee1 (MeV)')
+            ax_a.set_xlabel(r'$E_{e_2}$ (MeV)'); ax_a.set_ylabel(r'$E_{e_1}$ (MeV)')
             ax_a.set_title('Analytic Fermi\n(Integrated over cos(θ))')
-            plt.colorbar(contour_a, ax=ax_a).set_label('dΓ/(dEe1 dEe2) / Γ^{2ν}')
+            plt.colorbar(contour_a, ax=ax_a).set_label(r'$d\Gamma/(dE_{e_1}\,dE_{e_2})\,/\,\Gamma^{2\nu}$')
 
             ax_n = axes[1]
             ax_d = axes[2]
         else:
             fig, (ax_n, ax_d) = plt.subplots(1, 2, figsize=(12, 5))
-            fig.suptitle(f'Normalized: dΓ/(dEe1 dEe2) / Γ^{{2ν}} — Potential {potential_index}', fontsize=14)
+            fig.suptitle(rf'{isotope}: Normalized: $d\Gamma/(dE_{{e_1}}\,dE_{{e_2}})\,/\,\Gamma^{{2\nu}}$ — {potential_label}', fontsize=14)
 
         contour_n = ax_n.contourf(Ee2_grid, Ee1_grid, spec_norm_numeric, levels=15, cmap='viridis')
-        ax_n.set_xlabel('Ee2 (MeV)'); ax_n.set_ylabel('Ee1 (MeV)')
+        ax_n.set_xlabel(r'$E_{e_2}$ (MeV)'); ax_n.set_ylabel(r'$E_{e_1}$ (MeV)')
         ax_n.set_title('Numeric Fermi\n(Integrated over cos(θ))')
-        plt.colorbar(contour_n, ax=ax_n).set_label('dΓ/(dEe1 dEe2) / Γ^{2ν}')
+        plt.colorbar(contour_n, ax=ax_n).set_label(r'$d\Gamma/(dE_{e_1}\,dE_{e_2})\,/\,\Gamma^{2\nu}$')
 
         contour_d = ax_d.contourf(Ee2_grid, Ee1_grid, spec_norm_direct, levels=15, cmap='viridis')
-        ax_d.set_xlabel('Ee2 (MeV)'); ax_d.set_ylabel('Ee1 (MeV)')
+        ax_d.set_xlabel(r'$E_{e_2}$ (MeV)'); ax_d.set_ylabel(r'$E_{e_1}$ (MeV)')
         ax_d.set_title('Numeric Fermi\n(Direct two_electron_kernel)')
-        plt.colorbar(contour_d, ax=ax_d).set_label('dΓ/(dEe1 dEe2) / Γ^{2ν}')
+        plt.colorbar(contour_d, ax=ax_d).set_label(r'$d\Gamma/(dE_{e_1}\,dE_{e_2})\,/\,\Gamma^{2\nu}$')
 
         plt.tight_layout()
-        plt.savefig(os.path.join(plots_output_directory, f"DoublesDiff_Spectrum_Normalized_potential_{potential_index}_Z{Z}_A{A}.png"), dpi=300)
+        plt.savefig(os.path.join(plots_output_directory, f"DoublesDiff_Spectrum_Normalized_potential_{potential_index}_Z{Z}_A{A}.png"), dpi=300, bbox_inches='tight')
+        plt.show()
+        # ========== PLOT 1c: NORMALIZED SPECTRUM (NUMERIC, INTEGRATED ONLY) WITH KINEMATIC LIMIT & ANGULAR CORRELATION ==========
+        fig, ax = plt.subplots(figsize=(9, 7))
+        contour = ax.contourf(Ee2_grid, Ee1_grid, spec_norm_numeric, levels=15, cmap='viridis')
+        plt.colorbar(contour, ax=ax).set_label(r'$d\Gamma/(dE_{e_1}\,dE_{e_2})\,/\,\Gamma^{2\nu}$')
+
+        # Kinematic limit Ee1 + Ee2 = Q + 2*ME, connecting (Ee2=ME, Ee1=Q+ME) to (Ee2=Q+ME, Ee1=ME)
+        kinematic_Ee2 = np.array([ME, Q + ME])
+        kinematic_Ee1 = Q + 2 * ME - kinematic_Ee2
+        ax.plot(kinematic_Ee2, kinematic_Ee1, 'r--', linewidth=2, label=r'Kinematic limit ($E_{e_1}+E_{e_2}=Q+2m_e$)')
+
+        # Angular correlation coefficient kappa^2nu overlaid as labeled contour lines
+        kappa_grid = np.full((len(Ee1_grid), len(Ee2_grid)), np.nan)
+        for i, Ee1 in enumerate(Ee1_grid):
+            for j, Ee2 in enumerate(Ee2_grid):
+                if Ee1 + Ee2 > Q + 2 * ME:
+                    continue
+                kappa_grid[i, j] = angular_correlation_distribution(
+                    Ee1, Ee2, Q,
+                    fermi_func=Fermi_numeric,
+                    E_func=E_function_numeric,
+                    nuclear_matrix_elements=nuclear_matrix_elements
+                )
+
+        kappa_contour = ax.contour(Ee2_grid, Ee1_grid, kappa_grid, levels=6, colors='white', linewidths=1.0)
+        ax.clabel(kappa_contour, inline=True, fontsize=8, fmt=r'$\kappa^{2\nu}=%.2f$')
+
+        ax.set_xlabel(r'$E_{e_2}$ (MeV)'); ax.set_ylabel(r'$E_{e_1}$ (MeV)')
+        ax.set_title(rf'{isotope}: Normalized $d\Gamma/(dE_{{e_1}}\,dE_{{e_2}})\,/\,\Gamma^{{2\nu}}$ (Numeric, Integrated) - {potential_label}')
+        ax.set_xlim(Ee2_grid[0], Ee2_grid[-1])
+        ax.set_ylim(Ee1_grid[0], Ee1_grid[-1])
+        ax.legend(loc='upper right')
+        plt.tight_layout()
+        plt.savefig(os.path.join(plots_output_directory, f"DoublesDiff_Spectrum_Normalized_Numeric_Kinematic_potential_{potential_index}_Z{Z}_A{A}.png"), dpi=300, bbox_inches='tight')
         plt.show()
     else:
         print("Skipping normalized plot: phase_space_data not provided.")
@@ -753,11 +1017,11 @@ def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fer
     fig, ax = plt.subplots(figsize=(10, 8))
     vmax = np.percentile(np.abs(percent_diff_methods[np.isfinite(percent_diff_methods)]), 95) if np.any(np.isfinite(percent_diff_methods)) else 1.0
     contour_diff = ax.contourf(Ee2_grid, Ee1_grid, percent_diff_methods, levels=20, cmap='RdBu_r', vmin=-vmax, vmax=vmax)
-    ax.set_xlabel('Ee2 (MeV)'); ax.set_ylabel('Ee1 (MeV)')
-    ax.set_title(f'Relative Difference (%) between Integrated and Direct Methods - Potential {potential_index}')
+    ax.set_xlabel(r'$E_{e_2}$ (MeV)'); ax.set_ylabel(r'$E_{e_1}$ (MeV)')
+    ax.set_title(f'{isotope}: Relative Difference (%) between Integrated and Direct Methods - {potential_label}')
     plt.colorbar(contour_diff, ax=ax).set_label('% Difference')
     plt.tight_layout()
-    plt.savefig(os.path.join(plots_output_directory, f"DoublesDiff_Integration_vs_Direct_potential_{potential_index}_Z{Z}_A{A}.png"), dpi=300)
+    plt.savefig(os.path.join(plots_output_directory, f"DoublesDiff_Integration_vs_Direct_potential_{potential_index}_Z{Z}_A{A}.png"), dpi=300, bbox_inches='tight')
     plt.show()
 
     diff_valid = percent_diff_methods[np.isfinite(percent_diff_methods)]
@@ -770,7 +1034,7 @@ def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fer
     print("Generating angular dependence plots...")
 
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    fig.suptitle(f'Angular Integrand Shape: dΓ/(dEe1 dEe2 d(cosθ)) at Different Energy Pairs - Potential {potential_index}', fontsize=14)
+    fig.suptitle(rf'{isotope}: Angular Integrand Shape: $d\Gamma/(dE_{{e_1}}\,dE_{{e_2}}\,d(\cos\theta))$ at Different Energy Pairs - {potential_label}', fontsize=14)
 
     i_max_symm = int(np.searchsorted(2 * Ee1_grid, Q + 2 * ME)) - 1
     i_low  = max(2, i_max_symm // 4)
@@ -779,7 +1043,7 @@ def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fer
     j_asym = int(np.searchsorted(Ee2_grid, Q + 2 * ME - Ee1_grid[i_low])) - 1
     j_asym = min(j_asym, len(Ee2_grid) - 1)
     energy_indices = [(i_low, i_low), (i_high, i_high), (i_low, j_asym), (i_mid, i_mid)]
-    energy_labels  = [f'Ee1={Ee1_grid[i]:.2f}, Ee2={Ee2_grid[j]:.2f} MeV' for i, j in energy_indices]
+    energy_labels  = [f'$E_{{e_1}}$={Ee1_grid[i]:.2f}, $E_{{e_2}}$={Ee2_grid[j]:.2f} MeV' for i, j in energy_indices]
 
     for plot_idx, ((idx_ee1, idx_ee2), energy_label) in enumerate(zip(energy_indices, energy_labels)):
         ax = axes[plot_idx // 2, plot_idx % 2]
@@ -788,14 +1052,14 @@ def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fer
             ax.plot(cos_theta_grid, data_analytic_1d, 'o-', linewidth=2, markersize=6, label='Analytic (Coulomb)')
         data_numeric_1d = spectrum_triple_diff_numeric[idx_ee1, idx_ee2, :]
         ax.plot(cos_theta_grid, data_numeric_1d, 's-', linewidth=2, markersize=6, label='Numeric (Dirac)')
-        ax.set_xlabel('cos(θ)')
-        ax.set_ylabel('dΓ/(dEe1 dEe2 d(cosθ))')
+        ax.set_xlabel(r'$\cos\theta$')
+        ax.set_ylabel(r'$d\Gamma/(dE_{e_1}\,dE_{e_2}\,d(\cos\theta))$')
         ax.set_title(energy_label)
         ax.grid(True, alpha=0.3)
         ax.legend()
 
     plt.tight_layout()
-    plt.savefig(os.path.join(plots_output_directory, f"TripleDiff_Angular_potential_{potential_index}_Z{Z}_A{A}.png"), dpi=300)
+    plt.savefig(os.path.join(plots_output_directory, f"TripleDiff_Angular_potential_{potential_index}_Z{Z}_A{A}.png"), dpi=300, bbox_inches='tight')
     plt.show()
 
     # ========== INTEGRATE OVER Ee1 → dΓ/(dEe2 d(cos θ)) ==========
@@ -814,7 +1078,7 @@ def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fer
                 continue
 
             if show_analytic:
-                integrand_analytic = lambda Ee1: triple_differential_spectrum_integrand_ee1(
+                integrand_analytic = lambda Ee1: double_differential_spectrum_kernel(
                     Ee1, Ee2, cos_theta, Q,
                     fermi_func=Fermi_analytic,
                     E_func=lambda Ee: 0.0,
@@ -825,7 +1089,7 @@ def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fer
                                             limit=limit_angle, points=[Ee1_min, (Ee1_min + Ee1_max)/2, Ee1_max])
                 spectrum_dEe2_dcos_theta_analytic[j, k] = max(integral_analytic, 0.0)
 
-            integrand_numeric = lambda Ee1: triple_differential_spectrum_integrand_ee1(
+            integrand_numeric = lambda Ee1: double_differential_spectrum_kernel(
                 Ee1, Ee2, cos_theta, Q,
                 fermi_func=Fermi_numeric,
                 E_func=E_function_numeric,
@@ -852,8 +1116,8 @@ def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fer
                 continue
 
             if show_analytic:
-                integrand_analytic = lambda Ee2: triple_differential_spectrum_integrand_ee2(
-                    Ee2, Ee1, cos_theta, Q,
+                integrand_analytic = lambda Ee2: double_differential_spectrum_kernel(
+                    Ee1, Ee2, cos_theta, Q,
                     fermi_func=Fermi_analytic,
                     E_func=lambda Ee: 0.0,
                     nuclear_matrix_elements=nuclear_matrix_elements
@@ -863,8 +1127,8 @@ def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fer
                                             limit=limit_angle, points=[Ee2_min, (Ee2_min + Ee2_max)/2, Ee2_max])
                 spectrum_dEe1_dcos_theta_analytic[i, k] = max(integral_analytic, 0.0)
 
-            integrand_numeric = lambda Ee2: triple_differential_spectrum_integrand_ee2(
-                Ee2, Ee1, cos_theta, Q,
+            integrand_numeric = lambda Ee2: double_differential_spectrum_kernel(
+                Ee1, Ee2, cos_theta, Q,
                 fermi_func=Fermi_numeric,
                 E_func=E_function_numeric,
                 nuclear_matrix_elements=nuclear_matrix_elements
@@ -879,23 +1143,23 @@ def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fer
 
     if show_analytic:
         fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-        fig.suptitle(f'dΓ/(dEe2 d(cos θ)) - Integrated over Ee1 - Potential {potential_index}', fontsize=14)
+        fig.suptitle(rf'{isotope}: $d\Gamma/(dE_{{e_2}}\,d(\cos\theta))$ - Integrated over $E_{{e_1}}$ - {potential_label}', fontsize=14)
         ax_a = axes[0]
         contour_a = ax_a.contourf(cos_theta_grid, Ee2_grid, spectrum_dEe2_dcos_theta_analytic, levels=15, cmap='viridis')
-        ax_a.set_xlabel('cos(θ)'); ax_a.set_ylabel('Ee2 (MeV)')
+        ax_a.set_xlabel(r'$\cos\theta$'); ax_a.set_ylabel(r'$E_{e_2}$ (MeV)')
         ax_a.set_title('Analytic Fermi (Pure Coulomb)')
-        plt.colorbar(contour_a, ax=ax_a).set_label('dΓ/(dEe2 d(cos θ))')
+        plt.colorbar(contour_a, ax=ax_a).set_label(r'$d\Gamma/(dE_{e_2}\,d(\cos\theta))$')
         ax_n = axes[1]
     else:
         fig, ax_n = plt.subplots(1, 1, figsize=(8, 6))
-        fig.suptitle(f'dΓ/(dEe2 d(cos θ)) - Integrated over Ee1 - Potential {potential_index}', fontsize=14)
+        fig.suptitle(rf'{isotope}: $d\Gamma/(dE_{{e_2}}\,d(\cos\theta))$ - Integrated over $E_{{e_1}}$ - {potential_label}', fontsize=14)
 
     contour_n = ax_n.contourf(cos_theta_grid, Ee2_grid, spectrum_dEe2_dcos_theta_numeric, levels=15, cmap='viridis')
-    ax_n.set_xlabel('cos(θ)'); ax_n.set_ylabel('Ee2 (MeV)')
+    ax_n.set_xlabel(r'$\cos\theta$'); ax_n.set_ylabel(r'$E_{e_2}$ (MeV)')
     ax_n.set_title('Numeric Fermi (Dirac Wavefunctions)')
-    plt.colorbar(contour_n, ax=ax_n).set_label('dΓ/(dEe2 d(cos θ))')
+    plt.colorbar(contour_n, ax=ax_n).set_label(r'$d\Gamma/(dE_{e_2}\,d(\cos\theta))$')
     plt.tight_layout()
-    plt.savefig(os.path.join(plots_output_directory, f"dEe2_dcos_theta_potential_{potential_index}_Z{Z}_A{A}.png"), dpi=300)
+    plt.savefig(os.path.join(plots_output_directory, f"dEe2_dcos_theta_potential_{potential_index}_Z{Z}_A{A}.png"), dpi=300, bbox_inches='tight')
     plt.show()
 
     # ========== PLOT 4: dΓ/(dEe1 d(cos θ)) ==========
@@ -903,23 +1167,23 @@ def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fer
 
     if show_analytic:
         fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-        fig.suptitle(f'dΓ/(dEe1 d(cos θ)) - Integrated over Ee2 - Potential {potential_index}', fontsize=14)
+        fig.suptitle(rf'{isotope}: $d\Gamma/(dE_{{e_1}}\,d(\cos\theta))$ - Integrated over $E_{{e_2}}$ - {potential_label}', fontsize=14)
         ax_a = axes[0]
         contour_a = ax_a.contourf(cos_theta_grid, Ee1_grid, spectrum_dEe1_dcos_theta_analytic, levels=15, cmap='viridis')
-        ax_a.set_xlabel('cos(θ)'); ax_a.set_ylabel('Ee1 (MeV)')
+        ax_a.set_xlabel(r'$\cos\theta$'); ax_a.set_ylabel(r'$E_{e_1}$ (MeV)')
         ax_a.set_title('Analytic Fermi (Pure Coulomb)')
-        plt.colorbar(contour_a, ax=ax_a).set_label('dΓ/(dEe1 d(cos θ))')
+        plt.colorbar(contour_a, ax=ax_a).set_label(r'$d\Gamma/(dE_{e_1}\,d(\cos\theta))$')
         ax_n = axes[1]
     else:
         fig, ax_n = plt.subplots(1, 1, figsize=(8, 6))
-        fig.suptitle(f'dΓ/(dEe1 d(cos θ)) - Integrated over Ee2 - Potential {potential_index}', fontsize=14)
+        fig.suptitle(rf'{isotope}: $d\Gamma/(dE_{{e_1}}\,d(\cos\theta))$ - Integrated over $E_{{e_2}}$ - {potential_label}', fontsize=14)
 
     contour_n = ax_n.contourf(cos_theta_grid, Ee1_grid, spectrum_dEe1_dcos_theta_numeric, levels=15, cmap='viridis')
-    ax_n.set_xlabel('cos(θ)'); ax_n.set_ylabel('Ee1 (MeV)')
+    ax_n.set_xlabel(r'$\cos\theta$'); ax_n.set_ylabel(r'$E_{e_1}$ (MeV)')
     ax_n.set_title('Numeric Fermi (Dirac Wavefunctions)')
-    plt.colorbar(contour_n, ax=ax_n).set_label('dΓ/(dEe1 d(cos θ))')
+    plt.colorbar(contour_n, ax=ax_n).set_label(r'$d\Gamma/(dE_{e_1}\,d(\cos\theta))$')
     plt.tight_layout()
-    plt.savefig(os.path.join(plots_output_directory, f"dEe1_dcos_theta_potential_{potential_index}_Z{Z}_A{A}.png"), dpi=300)
+    plt.savefig(os.path.join(plots_output_directory, f"dEe1_dcos_theta_potential_{potential_index}_Z{Z}_A{A}.png"), dpi=300, bbox_inches='tight')
     plt.show()
 
     # ========== PLOT 5: NUMERIC vs ANALYTIC % DIFF (Coulomb only) ==========
@@ -932,11 +1196,11 @@ def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fer
         fig, ax = plt.subplots(figsize=(10, 8))
         vmax = np.percentile(np.abs(percent_diff[np.isfinite(percent_diff)]), 95)
         contour = ax.contourf(Ee2_grid, Ee1_grid, percent_diff, levels=20, cmap='RdBu_r', vmin=-vmax, vmax=vmax)
-        ax.set_xlabel('Ee2 (MeV)'); ax.set_ylabel('Ee1 (MeV)')
-        ax.set_title(f'Relative Difference (%) between Numeric and Analytic - Potential {potential_index}')
+        ax.set_xlabel(r'$E_{e_2}$ (MeV)'); ax.set_ylabel(r'$E_{e_1}$ (MeV)')
+        ax.set_title(f'{isotope}: Relative Difference (%) between Numeric and Analytic - {potential_label}')
         plt.colorbar(contour, ax=ax).set_label('% Difference')
         plt.tight_layout()
-        plt.savefig(os.path.join(plots_output_directory, f"DoubleDiff_Difference_potential_{potential_index}_Z{Z}_A{A}.png"), dpi=300)
+        plt.savefig(os.path.join(plots_output_directory, f"DoubleDiff_Difference_potential_{potential_index}_Z{Z}_A{A}.png"), dpi=300, bbox_inches='tight')
         plt.show()
 
     print("\nTriple-differential spectrum calculation complete!")
@@ -955,12 +1219,98 @@ def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fer
         "spectrum_dEe1_dcos_theta_numeric": spectrum_dEe1_dcos_theta_numeric,
     }
 
+# ========== dGamma/d|ΔT| ENERGY DIFFERENCE SPECTRUM ==========
+
+def calculate_and_plot_energy_diff_spectrum(Q, Z, A, Fermi_numeric,
+                                             plots_output_directory, potential_index,
+                                             nuclear_matrix_elements, isotope):
+    """
+    Calculate and plot dΓ/d(|ΔT|) where ΔT = T_{e1} − T_{e2}.
+
+    Parameters
+    ----------
+    Q : float
+        Q-value (MeV).
+    Z, A : int
+        Atomic and mass numbers.
+    Fermi_numeric : callable
+        Numerical Fermi function from Dirac solutions.
+    plots_output_directory : str or Path
+        Directory to save plots.
+    potential_index : int
+        Potential model index.
+    nuclear_matrix_elements : dict
+        Nuclear matrix elements for the selected isotope.
+    isotope : str
+        Isotope name, used in plot titles.
+    """
+    potential_names = {0: "Pure Coulomb", 2: "Finite-Sized Nucleus", 3: "Thomas-Fermi"}
+    potential_label = potential_names.get(potential_index, f"Potential {potential_index}")
+    nme_LO = {**nuclear_matrix_elements, "xi31": 0.0, "xi51": 0.0}
+
+    delta_T_grid = np.linspace(0.0, Q, 300)
+
+    spec_num = np.array([energy_diff_spectrum_integrand(dT, Q, Fermi_numeric, nuclear_matrix_elements)
+                         for dT in delta_T_grid])
+    spec_LO  = np.array([energy_diff_spectrum_integrand(dT, Q, Fermi_numeric, nme_LO)
+                         for dT in delta_T_grid])
+
+    # ========== Differential spectrum plot ==========
+    fig, ax = plt.subplots(1, 1, figsize=(12, 5))
+    ax.plot(delta_T_grid, spec_num, lw=1.5, label=r'Full ($\xi_{31},\xi_{51}$ included)')
+    ax.plot(delta_T_grid, spec_LO,  lw=1.5, ls='--', label=r'LO ($\xi_{31}=\xi_{51}=0$)')
+    ax.set_xlabel(r'$|\Delta T| = |T_{e_1} - T_{e_2}|$ (MeV)')
+    ax.set_ylabel(r'$d\Gamma/d|\Delta T|$ (1/yr per MeV)')
+    ax.set_title(rf'{isotope}: Energy Difference Spectrum $d\Gamma/d|\Delta T|$'
+                 rf' ($\Delta T = T_{{e_1}} - T_{{e_2}}$) ({potential_label})')
+    ax.legend()
+    ax.grid(True)
+    plt.tight_layout()
+    plt.savefig(os.path.join(plots_output_directory,
+                             f"EnergyDiff_Spectrum_potential_{potential_index}_Z{Z}_A{A}.png"),
+                dpi=300, bbox_inches='tight')
+    plt.show()
+
+    # ========== Total rate and normalized spectrum ==========
+    total_rate_num, _ = quad(
+        lambda dT: energy_diff_spectrum_integrand(dT, Q, Fermi_numeric, nuclear_matrix_elements),
+        0.0, Q,
+        epsabs=1e-18, epsrel=1e-16, limit=20000, points=[0.0, Q / 2.0, Q]
+    )
+    total_rate_LO, _ = quad(
+        lambda dT: energy_diff_spectrum_integrand(dT, Q, Fermi_numeric, nme_LO),
+        0.0, Q,
+        epsabs=1e-18, epsrel=1e-16, limit=20000, points=[0.0, Q / 2.0, Q]
+    )
+
+    norm_num = spec_num / total_rate_num
+    norm_LO  = spec_LO  / total_rate_LO
+
+    plt.figure(figsize=(12, 5))
+    plt.plot(delta_T_grid, norm_num, lw=1.5, label=r'Full ($\xi_{31},\xi_{51}$ included)')
+    plt.plot(delta_T_grid, norm_LO,  lw=1.5, ls='--', label=r'LO ($\xi_{31}=\xi_{51}=0$)')
+    plt.xlabel(r'$|\Delta T| = |T_{e_1} - T_{e_2}|$ (MeV)')
+    plt.ylabel(r'$1/\Gamma\;d\Gamma/d|\Delta T|$')
+    plt.title(rf'{isotope}: Normalized Energy Difference Spectrum ({potential_label})')
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(os.path.join(plots_output_directory,
+                             f"EnergyDiff_Spectrum_Normalized_potential_{potential_index}_Z{Z}_A{A}.png"),
+                dpi=300, bbox_inches='tight')
+    plt.show()
+
+    print(f"Normalization check — Full: {np.trapezoid(norm_num, delta_T_grid):.10g}, "
+          f"LO: {np.trapezoid(norm_LO, delta_T_grid):.10g}")
+
+
 # ========== RESULTS OUTPUT ==========
 
 def write_results_to_file(results_output_path, config, potential_index, Z, A, G_results, G_results_num,
                           H_results_num, halflife, halflife_num, cnf,
                           total_rate=None, total_rate_num=None,
-                          total_err=None, total_err_num=None):
+                          total_err=None, total_err_num=None,
+                          kappa_results=None):
     """
     Write phase-space factors and half-lives to output file.
 
@@ -987,15 +1337,14 @@ def write_results_to_file(results_output_path, config, potential_index, Z, A, G_
     cnf : dict
         Isotope configuration dictionary.
     """
-    # Determine scheme
-    scheme_map = {0: "B", 2: "A", 3: "C"}
-    scheme = scheme_map.get(potential_index, "Unknown")
+    potential_names = {0: "Pure Coulomb", 2: "finite sized nucleus", 3: "Thomas-Fermi"}
+    potential_label = potential_names.get(potential_index, "Unknown")
 
     Simkovic_Gs = cnf.get("Simkovic_Gs", None)
     Simkovic_Hs = cnf.get("Simkovic_Hs", None)
 
     with open(results_output_path, "w") as f:
-        f.write(f"### Double Beta Decay Results for {config['isotope']} using Scheme {scheme} ###\n\n")
+        f.write(f"### Double Beta Decay Results for {config['isotope']} using {potential_label} ###\n\n")
 
         # ========== G factors ==========
         tags = ["G0", "G2", "G4", "G22"]
@@ -1006,14 +1355,14 @@ def write_results_to_file(results_output_path, config, potential_index, Z, A, G_
             for i, tag in enumerate(tags):
                 percent_diff = 100.0 * (G_results_num[i] - Simkovic_Gs[i]) / Simkovic_Gs[i]
                 f.write(f"{tag:<10} {G_results_num[i]:<15.6e} {Simkovic_Gs[i]:<15.6e} {percent_diff:<20.6f}\n")
-            if scheme == "B":
+            if potential_index == 0:
                 f.write(f"\nAnalytic reference: {[float(f'{v:.6e}') for v in G_results]}\n")
         else:
             f.write(f"{'Tags':<10} {'Numeric':<15}\n")
             f.write("-" * 25 + "\n")
             for i, tag in enumerate(tags):
                 f.write(f"{tag:<10} {G_results_num[i]:<15.6e}\n")
-            if scheme == "B":
+            if potential_index == 0:
                 f.write(f"\nAnalytic reference: {[float(f'{v:.6e}') for v in G_results]}\n")
         f.write("\n")
 
@@ -1050,6 +1399,30 @@ def write_results_to_file(results_output_path, config, potential_index, Z, A, G_
             f.write("DECAY RATES FROM ε-SPECTRUM\n")
             f.write("-" * 40 + "\n")
             f.write("Not computed (epsilon spectrum was not selected).\n")
+
+        # ========== Angular correlation ==========
+        f.write("\n")
+        f.write("ANGULAR CORRELATION ⟨κ²ν⟩  (decay-rate-weighted average, numeric F and E)\n")
+        f.write("-" * 70 + "\n")
+        f.write(f"  Truncation order convention:\n")
+        f.write(f"    LO     : κ²ν ratio = 1, weight = G0/H0 only\n")
+        f.write(f"    1st    : κ²ν ratio = 1, weight includes ξ31 term\n")
+        f.write(f"    total  : full κ²ν ratio, full weight; Γ²ν obtained two ways:\n")
+        f.write(f"             formula : Γ²ν = G0..G22 combination (4 pre-computed tagged integrals)\n")
+        f.write(f"             direct  : Γ²ν = single direct integral of the untagged two-electron kernel\n")
+        f.write("-" * 70 + "\n")
+        if kappa_results is not None:
+            f.write(f"{'kappa_LO':<20} {'kappa_1st_order':<20} {'kappa_total_formula':<20} {'kappa_total_direct':<20}\n")
+            f.write(f"{kappa_results['kappa_LO']:<20.6e} "
+                    f"{kappa_results['kappa_1st']:<20.6e} "
+                    f"{kappa_results['kappa_total']:<20.6e} "
+                    f"{kappa_results['kappa_direct']:<20.6e}\n")
+            f.write(f"(integration error: formula ±{kappa_results['kappa_total_err']:.2e}, "
+                    f"direct ±{kappa_results['kappa_direct_err']:.2e})\n")
+            f.write(f"% diff (direct vs formula): kappa {kappa_results['kappa_percent_diff']:+.6f}%, "
+                    f"Γ²ν {kappa_results['gamma_percent_diff']:+.6f}%\n")
+        else:
+            f.write("Not computed.\n")
 
 
 # ========== MAIN SPECTRUM CALCULATION ==========
@@ -1113,9 +1486,16 @@ def calc_double_beta_decay_spectrum(config, cnf):
     T_n, r_n, P_n, Q_n = load_data(directory_name, file_name_kappa_n, verbose=verbose)
     T_p, r_p, P_p, Q_p = load_data(directory_name, file_name_kappa_p, verbose=verbose)
     P_n_Z0, Q_p_Z0 = None, None
-    if verbose:
-        T_n_Z0, r_n_Z0, P_n_Z0, Q_n_Z0 = load_data(directory_name, file_name_kappa_n_Z0, verbose=verbose)
-        T_p_Z0, r_p_Z0, P_p_Z0, Q_p_Z0 = load_data(directory_name, file_name_kappa_p_Z0, verbose=verbose)
+    z0_n_path = directory_name / file_name_kappa_n_Z0
+    z0_p_path = directory_name / file_name_kappa_p_Z0
+    if z0_n_path.exists() and z0_p_path.exists():
+        _, _, P_n_Z0, _ = load_data(directory_name, file_name_kappa_n_Z0, verbose=verbose)
+        _, _, _, Q_p_Z0 = load_data(directory_name, file_name_kappa_p_Z0, verbose=verbose)
+    elif verbose:
+        print(
+            f"[INFO] Z=0 reference files not found — Fermi division plot will be skipped.\n"
+            f"       Re-run with '--mode generate -v' to generate them."
+        )
 
     idx_R, mesh_point_R_au = find_mesh_point_R_au(r_n, rN, verbose=verbose)
     data = {"T": T_n, "P_n": P_n, "P_n_Z0": P_n_Z0, "Q_p": Q_p, "Q_p_Z0": Q_p_Z0, "idx_R": idx_R, "mesh_point_R_au": mesh_point_R_au}
@@ -1139,11 +1519,11 @@ def calc_double_beta_decay_spectrum(config, cnf):
 
     # ========== PLOT WAVEFUNCTION COMPARISONS ==========
     if "gf" in plots:
-        plot_f_and_g(Ee, potential_index, cnf, data, plots_output_directory)
+        plot_f_and_g(Ee, potential_index, cnf, data, plots_output_directory, config['isotope'])
 
     # ========== PLOT FERMI FUNCTION ==========
     if "fermi" in plots:
-        plot_fermi_function(Q, Z, A, rN, data, plots_output_directory, potential_index)
+        plot_fermi_function(Q, Z, A, rN, data, plots_output_directory, potential_index, config['isotope'])
 
     # ========== CALCULATE PHASE-SPACE FACTORS ==========
     phase_space_data = calculate_phase_space_factors(Q, Fermi_analytic, Fermi_numeric, E_numeric, nuclear_matrix_elements)
@@ -1156,26 +1536,47 @@ def calc_double_beta_decay_spectrum(config, cnf):
         compute_and_compare_total_gamma(Q, Fermi_numeric, E_numeric, nuclear_matrix_elements,
                                          phase_space_data, verbose=verbose)
 
+    # ========== COMPUTE WEIGHTED ANGULAR CORRELATION ==========
+    print("\nComputing decay-rate-weighted ⟨κ²ν⟩ at three truncation orders...")
+    kappa_results = compute_kappa_weighted_average(Q, Fermi_numeric, E_numeric,
+                                                    nuclear_matrix_elements, phase_space_data)
+    print(f"  ⟨κ²ν⟩ LO            = {kappa_results['kappa_LO']:.6e}")
+    print(f"  ⟨κ²ν⟩ 1st           = {kappa_results['kappa_1st']:.6e}")
+    print(f"  ⟨κ²ν⟩ total (formula) = {kappa_results['kappa_total']:.6e}  (±{kappa_results['kappa_total_err']:.2e})"
+          f"   [Γ²ν from G0..G22 combination = {kappa_results['gamma_formula']:.6e}]")
+    print(f"  ⟨κ²ν⟩ total (direct)  = {kappa_results['kappa_direct']:.6e}  (±{kappa_results['kappa_direct_err']:.2e})"
+          f"   [Γ²ν from direct untagged integral = {kappa_results['gamma_direct']:.6e}]")
+    print(f"  Difference: κ {kappa_results['kappa_percent_diff']:+.6f}%,  Γ²ν {kappa_results['gamma_percent_diff']:+.6f}%")
+
     # ========== CALCULATE HALF-LIVES ==========
     MGT1 = nuclear_matrix_elements["MGT1"]
     xi31 = nuclear_matrix_elements["xi31"]
     xi51 = nuclear_matrix_elements["xi51"]
-    halflife = 1 / (GA ** 4 * MGT1 ** 2 * (G_results[0] + xi31 * G_results[1] +
-                    1/3 * xi31 ** 2 * G_results[3] + (1/3 * xi31 ** 2 + xi51) * G_results[2]))
-
-    halflife_num = 1 / (GA ** 4 * MGT1 ** 2 * (G_results_num[0] + xi31 * G_results_num[1] +
-                        1/3 * xi31 ** 2 * G_results_num[3] + (1/3 * xi31 ** 2 + xi51) * G_results_num[2]))
+    halflife     = 1 / (GA ** 4 * MGT1 ** 2 * _gamma_combination(G_results,     xi31, xi51))
+    halflife_num = 1 / (GA ** 4 * MGT1 ** 2 * _gamma_combination(G_results_num, xi31, xi51))
 
     # ========== CALCULATE AND PLOT TRIPLE-DIFFERENTIAL SPECTRUM ==========
     if "double_diff" in plots:
         calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fermi_numeric,
-                                                        E_numeric, plots_output_directory, potential_index, nuclear_matrix_elements, phase_space_data)
+                                                        E_numeric, plots_output_directory, potential_index, nuclear_matrix_elements, config['isotope'], phase_space_data)
 
     # ========== CALCULATE AND PLOT SPECTRA ==========
     spectrum_data = None
     if "epsilon" in plots:
         spectrum_data = calculate_and_plot_spectra(Q, Z, A, Fermi_analytic, Fermi_numeric,
-                                                   plots_output_directory, potential_index, nuclear_matrix_elements)
+                                                   plots_output_directory, potential_index, nuclear_matrix_elements, config['isotope'])
+
+    # ========== CALCULATE AND PLOT ENERGY DIFFERENCE SPECTRUM ==========
+    if "energy_diff" in plots:
+        calculate_and_plot_energy_diff_spectrum(Q, Z, A, Fermi_numeric,
+                                                plots_output_directory, potential_index,
+                                                nuclear_matrix_elements, config['isotope'])
+
+    # ========== CALCULATE AND PLOT SINGLE-ELECTRON SPECTRA ==========
+    if "electron" in plots:
+        calculate_and_plot_single_electron_spectra(Q, Z, A, Fermi_analytic, Fermi_numeric,
+                                                   plots_output_directory, potential_index,
+                                                   nuclear_matrix_elements, config['isotope'])
 
     # ========== WRITE RESULTS ==========
     write_results_to_file(
@@ -1185,6 +1586,7 @@ def calc_double_beta_decay_spectrum(config, cnf):
         total_rate_num=spectrum_data["total_rate_num"] if spectrum_data else None,
         total_err=spectrum_data["total_err"] if spectrum_data else None,
         total_err_num=spectrum_data["total_err_num"] if spectrum_data else None,
+        kappa_results=kappa_results,
     )
 
     print(f"\nResults written to: {results_output_path}")

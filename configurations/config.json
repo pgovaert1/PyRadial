@@ -27,7 +27,7 @@
 
 "generator":{
 	"potential_index": 0,
-	"mode": null,
+	"mode": "all",
 	"T_plot_energy-MeV": 0.5,
 	"T_end-MeV": 2.45791,
 	"T_start-MeV": 1e-4,

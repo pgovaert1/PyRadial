@@ -2,7 +2,7 @@
 
 import numpy as np
 from scipy.integrate import quad
-from configurations.physics_constants import ME, ALPHA, GF, VUD, HBAR_C, GA, AU, C, E_HARTREE
+from configurations.physics_constants import ME, GF, VUD, HBAR_C, GA
 
 # ============================================================================
 # Constants
@@ -71,7 +71,7 @@ def phase_space_polynomial(tag, x, y):
     elif tag == 22:
         return x**5 * (x**4 - 6*x*x*y*y + 21*y**4) / (10080.0 * (2*ME)**4)
     else:
-        raise ValueError(f"Unknowown tag: {tag}")
+        raise ValueError(f"Unknown tag: {tag}")
 
 
 # ============================================================================
@@ -126,7 +126,7 @@ def two_electron_kernel(Ee1, Ee2, Q_value, tag, fermi_func, nuclear_matrix_eleme
     if tag is not None:
         polynomial = phase_space_polynomial(tag, neutrino_energy_sum, energy_assymetry)
         return float(pre_factor * F1 * F2 * p1 * Ee1 * p2 * Ee2 * polynomial)
-    elif tag is None:
+    else:
         I_0 = phase_space_polynomial(0, neutrino_energy_sum, energy_assymetry)
         I_2 = phase_space_polynomial(2, neutrino_energy_sum, energy_assymetry)
         I_4 = phase_space_polynomial(4, neutrino_energy_sum, energy_assymetry)
@@ -200,9 +200,47 @@ def angular_correlation_distribution(Ee1, Ee2, Q_value, fermi_func, E_func, nucl
     numerator =  (1 + xi31 * I_tilde2 + 5/9 * xi31**2 * I_tilde22 + (2/9 * xi31**2 + xi51) * I_tilde4)
     denominator = (1 + xi31 * I_tilde2 + 1/3 * xi31**2 * I_tilde22 + (1/3 * xi31**2 + xi51) * I_tilde4)
 
-    return float(pre_factor * numerator / denominator) 
+    return float(pre_factor * numerator / denominator)
 
-    
+
+def angular_correlation_weighted_kernel(Ee1, Ee2, Q_value, fermi_func, E_func, nuclear_matrix_elements):
+    """
+    Evaluate dΓ/(dEe1 dEe2) · κ²ν(Ee1, Ee2) directly.
+
+    This is the integrand whose double integral over (Ee1, Ee2), divided by
+    the double integral of the unweighted two-electron kernel
+    (`two_electron_kernel` with `tag=None`) over the same domain, gives the
+    decay-rate-weighted average angular correlation coefficient ⟨κ²ν⟩.
+
+    Parameters
+    ----------
+    Ee1 : float
+        Total energy of the first electron.
+    Ee2 : float
+        Total energy of the second electron.
+    Q_value : float
+        Q-value of the decay process.
+    fermi_func : callable
+        Function returning the Fermi function value for a given electron energy.
+    E_func : callable
+        Function returning the energy-dependent correction factor for a given electron energy.
+    nuclear_matrix_elements : dict
+        Nuclear matrix elements for the selected isotope.
+
+    Returns
+    -------
+    float
+        Value of dΓ/(dEe1 dEe2) · κ²ν. Returns 0.0 for kinematically
+        forbidden configurations.
+    """
+    base = two_electron_kernel(Ee1, Ee2, Q_value, tag=None,
+                               fermi_func=fermi_func,
+                               nuclear_matrix_elements=nuclear_matrix_elements)
+    if base == 0.0:
+        return 0.0
+
+    kappa = angular_correlation_distribution(Ee1, Ee2, Q_value, fermi_func, E_func, nuclear_matrix_elements)
+    return base * kappa
 
 
 
@@ -254,10 +292,10 @@ def phase_combo(Q_minus_eps, D, nuclear_matrix_elements):
     x = Q_minus_eps
     y = 2*D  # y = Ee1 - Ee2 = 2Δ
 
-    A0  = x**5 / 30.0
-    A2  = x**5 * (x*x + 7*y*y) / (420.0 * (2.0*ME)**2)
-    A4  = x**5 * (x**4 + 18.0*x*x*y*y + 21.0*y**4) / (5040.0 * (2.0*ME)**4)
-    A22 = x**5 * (x**4 - 6.0*x*x*y*y + 21.0*y**4) / (10080.0 * (2.0*ME)**4)
+    A0  = phase_space_polynomial(0,  x, y)
+    A2  = phase_space_polynomial(2,  x, y)
+    A4  = phase_space_polynomial(4,  x, y)
+    A22 = phase_space_polynomial(22, x, y)
 
     return A0 + A2*xi31 + A4*(xi31**2/3.0 + xi51) + A22*(xi31**2/3.0)
 
@@ -334,6 +372,47 @@ def spectrum_epsilon_integrand(eps, Q_value, fermi_func, nuclear_matrix_elements
 
 
 
+def energy_diff_spectrum_integrand(delta_T, Q, fermi_func, nuclear_matrix_elements):
+    """
+    Compute dΓ/d(|ΔT|) where ΔT = T_{e1} − T_{e2} = Ee1 − Ee2.
+
+    At fixed |ΔT| = delta_T ≥ 0, integrates the two-electron kernel over all
+    allowed Ee2, with a factor of 2 because both ΔT = +delta_T and ΔT = −delta_T
+    contribute equally (the kernel is even in ΔT).
+    """
+    if not (0.0 <= delta_T <= Q):
+        return 0.0
+    Ee2_max = (Q + 2.0 * ME - delta_T) / 2.0
+    if Ee2_max <= ME:
+        return 0.0
+    value, _ = quad(
+        lambda Ee2: two_electron_kernel(Ee2 + delta_T, Ee2, Q, tag=None,
+                                        fermi_func=fermi_func,
+                                        nuclear_matrix_elements=nuclear_matrix_elements),
+        ME, Ee2_max,
+        epsabs=1e-16, epsrel=1e-14, limit=20000,
+        points=[ME, (ME + Ee2_max) / 2.0, Ee2_max]
+    )
+    return 2.0 * value
+
+
+def single_electron_spectrum_integrand(Ee1, Q, fermi_func, nuclear_matrix_elements):
+    """Compute dΓ/dEe1 by integrating two_electron_kernel over Ee2."""
+    if not (ME <= Ee1 <= Q + ME):
+        return 0.0
+    Ee2_max = Q + 2.0 * ME - Ee1
+    if Ee2_max <= ME:
+        return 0.0
+    value, _ = quad(
+        lambda Ee2: two_electron_kernel(Ee1, Ee2, Q, tag=None,
+                                        fermi_func=fermi_func,
+                                        nuclear_matrix_elements=nuclear_matrix_elements),
+        ME, Ee2_max,
+        epsabs=1e-16, epsrel=1e-14, limit=20000,
+    )
+    return value
+
+
 def double_differential_spectrum_kernel(Ee1, Ee2, cos_theta, Q_value, fermi_func, E_func, nuclear_matrix_elements):
     """
     Compute the triple-differential spectrum dΓ/(dEe1 dEe2 d(cos θ)).
@@ -399,91 +478,3 @@ def double_differential_spectrum_kernel(Ee1, Ee2, cos_theta, Q_value, fermi_func
     return float(result)
 
 
-def triple_differential_spectrum_integrand_cos_theta(cos_theta, Ee1, Ee2, Q_value, fermi_func, E_func, nuclear_matrix_elements):
-    """
-    Integrand for d(cos θ) integration at fixed electron energies.
-    
-    This returns the triple-differential spectrum evaluated at a point,
-    suitable for integration over cos(θ) using quad.
-    
-    Parameters
-    ----------
-    cos_theta : float
-        Cosine of the angle between electron momenta (-1 to +1).
-    Ee1 : float
-        Total energy of the first electron (MeV).
-    Ee2 : float
-        Total energy of the second electron (MeV).
-    Q_value : float
-        Q-value of the decay process (MeV).
-    fermi_func : callable
-        Function returning the Fermi correction factor F(Z, Ee).
-    E_func : callable
-        Function returning the energy correction factor E(Ee) = 2*g*f.
-    
-    Returns
-    -------
-    float
-        Value of the integrand for cos(θ) integration.
-    """
-    return double_differential_spectrum_kernel(Ee1, Ee2, cos_theta, Q_value, fermi_func, E_func, nuclear_matrix_elements)
-
-
-def triple_differential_spectrum_integrand_ee2(Ee2, Ee1, cos_theta, Q_value, fermi_func, E_func, nuclear_matrix_elements):
-    """
-    Integrand for Ee2 integration at fixed Ee1 and cos(θ).
-    
-    This returns the triple-differential spectrum evaluated at a point,
-    suitable for integration over Ee2 using quad.
-    
-    Parameters
-    ----------
-    Ee2 : float
-        Total energy of the second electron (MeV).
-    Ee1 : float
-        Total energy of the first electron (MeV).
-    cos_theta : float
-        Cosine of the angle between electron momenta.
-    Q_value : float
-        Q-value of the decay process (MeV).
-    fermi_func : callable
-        Function returning the Fermi correction factor F(Z, Ee).
-    E_func : callable
-        Function returning the energy correction factor E(Ee) = 2*g*f.
-    
-    Returns
-    -------
-    float
-        Value of the integrand for Ee2 integration.
-    """
-    return double_differential_spectrum_kernel(Ee1, Ee2, cos_theta, Q_value, fermi_func, E_func, nuclear_matrix_elements)
-
-
-def triple_differential_spectrum_integrand_ee1(Ee1, Ee2, cos_theta, Q_value, fermi_func, E_func, nuclear_matrix_elements):
-    """
-    Integrand for Ee1 integration at fixed Ee2 and cos(θ).
-    
-    This returns the triple-differential spectrum evaluated at a point,
-    suitable for integration over Ee1 using quad.
-    
-    Parameters
-    ----------
-    Ee1 : float
-        Total energy of the first electron (MeV).
-    Ee2 : float
-        Total energy of the second electron (MeV).
-    cos_theta : float
-        Cosine of the angle between electron momenta.
-    Q_value : float
-        Q-value of the decay process (MeV).
-    fermi_func : callable
-        Function returning the Fermi correction factor F(Z, Ee).
-    E_func : callable
-        Function returning the energy correction factor E(Ee) = 2*g*f.
-    
-    Returns
-    -------
-    float
-        Value of the integrand for Ee1 integration.
-    """
-    return double_differential_spectrum_kernel(Ee1, Ee2, cos_theta, Q_value, fermi_func, E_func, nuclear_matrix_elements)
