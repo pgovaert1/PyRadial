@@ -1,21 +1,16 @@
 #!/usr/bin/env python
 
 # ========== Importing libraries ==========
-import json
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.interpolate import CubicSpline, interp1d
-from scipy.optimize import brentq
+from scipy.interpolate import CubicSpline
 import mpmath as mp
-import os
 from scipy.special import spherical_jn
 from tqdm import tqdm
-import time
-import math
 from pathlib import Path
 from configurations.physics_constants import ALPHA, C, EPSILON, AU, E_HARTREE, R0
 from algorithms.thomas_fermi import make_phi_r
-from algorithms.grid_creation import find_x, radial_grid, obtain_mesh_range, find_rc
+from algorithms.grid_creation import radial_grid, obtain_mesh_range, find_rc
 
 # ========== Set arbitrary precision arithmetic ==========
 mp.mp.dps = 30
@@ -145,7 +140,7 @@ def general_potential_parameters(r_a, r_b, l, T, derivatives):
 # ========== Neumaier compensated summation functions ==========
 # ========== Enhances floating-point precision for long accumulation loops ==========
 
-def Neaumaier_add(sum_, c, x):
+def Neumaier_add(sum_, c, x):
     """
     Perform one step of Neumaier compensated summation.
 
@@ -177,7 +172,7 @@ def Neaumaier_add(sum_, c, x):
     return t, c
 
 
-def Neaumaier_value(sum_, c):
+def Neumaier_value(sum_, c):
     """
     Compute the corrected sum from Neumaier compensated summation.
 
@@ -276,18 +271,15 @@ def singular_power_series_terms(u_array, r_b, l ,Z , kappa, sigma):
         S_an, San_c = 0.0 , 0.0
         S_bn, Sbn_c = 0.0, 0.0
 
-        # S_an = a1 + 2*a2
-        # S_bn = b1 + 2*b2
-
         for i, ax in enumerate(a):
-            S_a, Sa_c = Neaumaier_add(S_a, Sa_c, ax)
+            S_a, Sa_c = Neumaier_add(S_a, Sa_c, ax)
             if i >= 1:
-                S_an, San_c = Neaumaier_add(S_an, San_c, i* ax)
+                S_an, San_c = Neumaier_add(S_an, San_c, i* ax)
 
         for i , bx in enumerate(b):
-            S_b, Sb_c = Neaumaier_add(S_b, Sb_c, bx)
+            S_b, Sb_c = Neumaier_add(S_b, Sb_c, bx)
             if i >=1:
-                S_bn, Sbn_c = Neaumaier_add(S_bn, Sbn_c, i * bx)
+                S_bn, Sbn_c = Neumaier_add(S_bn, Sbn_c, i * bx)
 
         n = 2
         while True:
@@ -301,15 +293,15 @@ def singular_power_series_terms(u_array, r_b, l ,Z , kappa, sigma):
             a.append(an)
             b.append(bn)
 
-            S_a, Sa_c = Neaumaier_add(S_a, Sa_c, an)
-            S_b, Sb_c = Neaumaier_add(S_b, Sb_c, bn)
-            S_an, San_c = Neaumaier_add(S_an, San_c, n * an)
-            S_bn, Sbn_c = Neaumaier_add(S_bn, Sbn_c, n * bn)
+            S_a, Sa_c = Neumaier_add(S_a, Sa_c, an)
+            S_b, Sb_c = Neumaier_add(S_b, Sb_c, bn)
+            S_an, San_c = Neumaier_add(S_an, San_c, n * an)
+            S_bn, Sbn_c = Neumaier_add(S_bn, Sbn_c, n * bn)
 
-            S_a_val = Neaumaier_value(S_a, Sa_c)
-            S_b_val = Neaumaier_value(S_b, Sb_c)
-            S_an_val = Neaumaier_value(S_an, San_c)
-            S_bn_val = Neaumaier_value(S_bn, Sbn_c)
+            S_a_val = Neumaier_value(S_a, Sa_c)
+            S_b_val = Neumaier_value(S_b, Sb_c)
+            S_an_val = Neumaier_value(S_an, San_c)
+            S_bn_val = Neumaier_value(S_bn, Sbn_c)
 
             # S_a += an
             # S_b += bn
@@ -328,7 +320,7 @@ def singular_power_series_terms(u_array, r_b, l ,Z , kappa, sigma):
                     break
 
             if n > 499:
-                raise RuntimeError(f"No convergenvce before n = {n}")
+                raise RuntimeError(f"No convergence before n = {n}")
 
 
     elif sigma == 1:
@@ -385,7 +377,7 @@ def singular_power_series_terms(u_array, r_b, l ,Z , kappa, sigma):
                     break
 
             if n > 499:
-                raise RuntimeError(f"No convergenvce before n = {n}")
+                raise RuntimeError(f"No convergence before n = {n}")
 
     else:  # sigma == -1
         s = abs(kappa) + 1
@@ -446,7 +438,7 @@ def singular_power_series_terms(u_array, r_b, l ,Z , kappa, sigma):
                     break
 
             if n > 499:
-                raise RuntimeError(f"No convergenvce before n = {n}")
+                raise RuntimeError(f"No convergence before n = {n}")
 
     arr_a = np.array(a)
     arr_b = np.array(b)
@@ -461,7 +453,7 @@ def singular_power_series_terms(u_array, r_b, l ,Z , kappa, sigma):
 
 # ========== Power series terms for general interval [r_a, r_b] ==========
 
-def general_power_series_terms(u_array, initial_condition_a, initial_condition_b, r_a, r_b, l, kappa, sigma):
+def general_power_series_terms(u_array, initial_condition_a, initial_condition_b, r_a, r_b, l, kappa, sigma, verbose=False):
     """
     Computes the power series coefficients An, Bn on regular radial interval [r_a, r_b]
 
@@ -533,18 +525,19 @@ def general_power_series_terms(u_array, initial_condition_a, initial_condition_b
 
     # ========== Initial sum of coefficients ==========
     for i, ax in enumerate(a):
-        S_a, Sa_c = Neaumaier_add(S_a, Sa_c, ax)
+        S_a, Sa_c = Neumaier_add(S_a, Sa_c, ax)
         if i >= 1:
-            S_an, San_c = Neaumaier_add(S_an, San_c, i * ax)
+            S_an, San_c = Neumaier_add(S_an, San_c, i * ax)
 
     for i, bx in enumerate(b):
-        S_b, Sb_c = Neaumaier_add(S_b, Sb_c, bx)
+        S_b, Sb_c = Neumaier_add(S_b, Sb_c, bx)
         if i >= 1:
-            S_bn, Sbn_c = Neaumaier_add(S_bn, Sbn_c, i * bx)
+            S_bn, Sbn_c = Neumaier_add(S_bn, Sbn_c, i * bx)
 
     # ========== Iterative recurrence relation ==========
     n = 3
     tol_multiplier = 1.1
+    stagnated = False
 
     while True:
         n += 1
@@ -574,16 +567,26 @@ def general_power_series_terms(u_array, initial_condition_a, initial_condition_b
         b.append(bn)
 
         # Accumulate sums with Neumaier compensation
-        S_a, Sa_c = Neaumaier_add(S_a, Sa_c, an)
-        S_b, Sb_c = Neaumaier_add(S_b, Sb_c, bn)
-        S_an, San_c = Neaumaier_add(S_an, San_c, n * an)
-        S_bn, Sbn_c = Neaumaier_add(S_bn, Sbn_c, n * bn)
+        S_a, Sa_c = Neumaier_add(S_a, Sa_c, an)
+        S_b, Sb_c = Neumaier_add(S_b, Sb_c, bn)
+        S_an, San_c = Neumaier_add(S_an, San_c, n * an)
+        S_bn, Sbn_c = Neumaier_add(S_bn, Sbn_c, n * bn)
 
         # Extract final sums with Neumaier correction
-        S_a_val = Neaumaier_value(S_a, Sa_c)
-        S_b_val = Neaumaier_value(S_b, Sb_c)
-        S_an_val = Neaumaier_value(S_an, San_c)
-        S_bn_val = Neaumaier_value(S_bn, Sbn_c)
+        S_a_val = Neumaier_value(S_a, Sa_c)
+        S_b_val = Neumaier_value(S_b, Sb_c)
+        S_an_val = Neumaier_value(S_an, San_c)
+        S_bn_val = Neumaier_value(S_bn, Sbn_c)
+
+        # ========== Stagnation detection ==========
+        if not stagnated and max(abs(an), abs(bn)) < 1e-15:
+            stagnated = True
+            if verbose:
+                print(
+                    f"[series] stagnation at n={n}: "
+                    f"|Δa|={abs(an):.2e}, |Δb|={abs(bn):.2e}; "
+                    f"tolerance relaxation starts (initial multiplier {tol_multiplier:.2f})"
+                )
 
         # ========== Convergence check ==========
         tolerance = EPSILON * max(
@@ -604,8 +607,12 @@ def general_power_series_terms(u_array, initial_condition_a, initial_condition_b
 
             # Evaluate tolerance for system equations
             tol_res = EPSILON * max(abs(S_a_val), abs(S_b_val))
-            if n > 20:
+            if stagnated:
                 tol_res *= tol_multiplier
+                if verbose:
+                    print(
+                        f"[series] n={n}: tol_res relaxed ×{tol_multiplier:.2f} to {tol_res:.2e}"
+                    )
                 tol_multiplier += 0.05
           
 
@@ -620,8 +627,8 @@ def general_power_series_terms(u_array, initial_condition_a, initial_condition_b
     arr_a = np.array([float(x) for x in a], dtype=float)
     arr_b = np.array([float(x) for x in b], dtype=float)
 
-    end_point_P = Neaumaier_value(S_a, Sa_c)
-    end_point_Q = Neaumaier_value(S_b, Sb_c)
+    end_point_P = Neumaier_value(S_a, Sa_c)
+    end_point_Q = Neumaier_value(S_b, Sb_c)
 
     return arr_a, arr_b, end_point_P, end_point_Q
 
@@ -630,7 +637,7 @@ def general_power_series_terms(u_array, initial_condition_a, initial_condition_b
 
 # ========== Assemble series coefficients from all intervals ==========
 
-def calc_series_terms(grid_points, l, T, Z, kappa, sigma, derivatives, ratio_max=0.05, max_subdiv=200):
+def calc_series_terms(grid_points, l, T, Z, kappa, sigma, derivatives, ratio_max=0.05, max_subdiv=200, verbose=False):
     """
     Compute power-series coefficients over the full radial grid
 
@@ -719,6 +726,7 @@ def calc_series_terms(grid_points, l, T, Z, kappa, sigma, derivatives, ratio_max
                     l,
                     kappa,
                     sigma,
+                    verbose=verbose,
                 )
 
                 if rb == r_b:
@@ -742,6 +750,7 @@ def calc_series_terms(grid_points, l, T, Z, kappa, sigma, derivatives, ratio_max
                 l,
                 kappa,
                 sigma,
+                verbose=verbose,
             )
 
             Series_terms_list_a.append(Temp_series_terms_a)
@@ -806,9 +815,18 @@ def solve_power_series(list_of_sequence_terms_a, list_of_sequence_terms_b, grid_
 
 # ========== Calculate normalization constant and phase shift ==========
 
-def Normalization_Constant(grid_points, idx_rc, P_array, Q_array, Analytic_normalization_const, T, k, eta, W, kappa, Z, Lambda, sigma, R_au, potential_index, phi_r):
+def Normalization_Constant(grid_points, idx_rc, P_array, Q_array, Analytic_normalization_const, T, k, eta, W, kappa, Z, Lambda, sigma, R_au, potential_index, phi_r, Z_match=None):
     """
     Calculates the normalization constant to normalize the wavefunctions to unity as described in 'RADIAL: a Fortran subroutine by Francesc Salvat'
+
+    For screened potentials (e.g. potential_index 3), the true potential at the matching
+    radius r_c is governed by the screened residual charge, not the bare nuclear charge Z.
+    `eta`/`Lambda` (and the analytic Coulomb wavefunctions built from them) must therefore
+    already be computed from that residual charge by the caller; `Z_match` is the matching
+    charge value used in the Dirac spinor mixing coefficients. `Z` itself is still used to
+    evaluate the true local potential at r_c (which already accounts for screening via
+    `phi_r`), since that part of the matching condition is exact regardless of the
+    asymptotic charge assumption.
 
     Parameters
     ----------
@@ -844,6 +862,10 @@ def Normalization_Constant(grid_points, idx_rc, P_array, Q_array, Analytic_norma
         Index specifying which potential model to use.
     phi_r : callable
         Function phi(r) used in the Thomas-Fermi screening potential.
+    Z_match : float, optional
+        Charge used in the Dirac spinor mixing coefficients of the asymptotic Coulomb
+        matching functions. Defaults to Z. Should be the screened residual charge for
+        screened potentials (e.g. potential_index 3), where it differs from Z.
 
     Returns
     -------
@@ -861,6 +883,9 @@ def Normalization_Constant(grid_points, idx_rc, P_array, Q_array, Analytic_norma
     r_c = grid_points[idx_rc]
     x = k * r_c
 
+
+    if Z_match is None:
+        Z_match = Z
 
     if abs(Z) == 0:
         l = (-kappa -1) if (kappa < 0) else kappa
@@ -902,11 +927,11 @@ def Normalization_Constant(grid_points, idx_rc, P_array, Q_array, Analytic_norma
         mult_term_subtraction = (Lambda * C**2 - kappa * W)
 
         def upper_Dirac_func(Coulomb_func, Coulomb_min_func):
-            return Analytic_normalization_const * ((kappa + Lambda) * mult_term_addition* Coulomb_func + Z/C * mult_term_subtraction * Coulomb_min_func)
+            return Analytic_normalization_const * ((kappa + Lambda) * mult_term_addition* Coulomb_func + Z_match/C * mult_term_subtraction * Coulomb_min_func)
 
 
         def lower_Dirac_func(Coulomb_func, Coulomb_min_func):
-            return - Analytic_normalization_const * (Z/C * mult_term_addition * Coulomb_func + (kappa + Lambda) * mult_term_subtraction * Coulomb_min_func)
+            return - Analytic_normalization_const * (Z_match/C * mult_term_addition * Coulomb_func + (kappa + Lambda) * mult_term_subtraction * Coulomb_min_func)
 
         PIA = upper_Dirac_func(F_l, F_lm)
         QA = lower_Dirac_func(F_l, F_lm)
@@ -1107,31 +1132,28 @@ def Visualize(config,cnf):
 
 
 
-    series_terms_upper, series_terms_lower = calc_series_terms(mesh_points, angular_momentum_quantum_number, T, Z, kappa, sigma, derivatives)
+    series_terms_upper, series_terms_lower = calc_series_terms(mesh_points, angular_momentum_quantum_number, T, Z, kappa, sigma, derivatives, verbose=config.get("verbose", False))
     wave_function_upper, wave_function_lower = solve_power_series(series_terms_upper, series_terms_lower, mesh_points)
-    N, delta, r_c = Normalization_Constant(mesh_points, rc_idx ,wave_function_upper,wave_function_lower, Analytic_normalization_const, T, k, eta, W, kappa, Z, Lambda, sigma, R_au, potential_index, phi_r)
 
+    # The matching radius r_c lies where the *true* potential (screened, for potential_index 3)
+    # has converged to its own asymptote, not where it equals the bare nuclear charge. The
+    # analytic Coulomb matching functions must therefore be built from that asymptotic charge.
     if potential_index == 3:
-        Z_match = -2.0
+        Z_match = -2.0 if Z < 0 else 2.0
         eta_match = ALPHA* Z_match *W/(k*C)
         Lambda_match = np.sqrt(kappa**2 - (Z_match/C)**2)
         Analytic_normalization_const_match = 1 /Lambda_match * 1/np.sqrt((Z_match/C)**2 * (W+C**2)**2 + (kappa + Lambda_match)**2 *(k*C)**2)
-
-
     else:
         Z_match = Z
         eta_match = eta
         Lambda_match = Lambda
         Analytic_normalization_const_match = Analytic_normalization_const
 
-    #
-    # r_analytic, P_analytic, Q_analytic = Analytic(Z_match,eta_match, k ,W, kappa, Lambda_match, Analytic_normalization_const_match, T, delta, 100000, mesh_points[rc_idx])
+    N, delta, r_c = Normalization_Constant(mesh_points, rc_idx ,wave_function_upper,wave_function_lower, Analytic_normalization_const_match, T, k, eta_match, W, kappa, Z, Lambda_match, sigma, R_au, potential_index, phi_r, Z_match)
 
     plt.figure(figsize=(12,8))
     plt.plot(mesh_points, wave_function_upper*N , label = "P(r) - Normalized")
     plt.plot(mesh_points, wave_function_lower*N , label = "Q(r) - Normalized")
-    # plt.plot(r_analytic, P_analytic, ls = "--" , label = "Analytical mpmath sol P(r)")
-    # plt.plot(r_analytic, Q_analytic, ls = "--" , label = "Analytical mpmath sol Q(r)")
     plt.axvline(x = R_au, color = "gray" , ls = "--", label = f"r = {R_au}")
     plt.axvline(x = r_c, color = "black", ls = "--", label = f"rc = {r_c}")
 
@@ -1192,6 +1214,31 @@ def Generate_Fermi_Data(config,cnf):
         print(f"resolution set to {r_N} mesh points")
     mesh_points = radial_grid(r_END, A_grid, r_N, r2, DRN, R_au)
 
+    if verbose:
+        r = mesh_points
+        N_r = len(r)
+        drs = np.diff(r)
+        with open("grid.txt", "w") as gf:
+            gf.write(f"Grid: N={N_r}  r_END={r[-1]:.6g} a.u.  r2={r2}  DRN={DRN}  A_grid={A_grid:.6f}\n")
+            gf.write(f"{'i':>8}  {'r (a.u.)':>18}  {'dr (a.u.)':>18}\n")
+            gf.write("-" * 50 + "\n")
+
+            def _row(i):
+                step = drs[i - 1] if i > 0 else float("nan")
+                gf.write(f"{i:>8}  {r[i]:>18.8e}  {step:>18.8e}\n")
+
+            gf.write("# first 11 points\n")
+            for i in range(11):
+                _row(i)
+            for frac in [1, 2, 3, 4, 5]:
+                mid = N_r * frac // 6
+                gf.write(f"# --- ~{frac}/6 of grid (i={mid}) ---\n")
+                _row(mid)
+            gf.write("# last 11 points\n")
+            for i in range(N_r - 11, N_r):
+                _row(i)
+        print("Grid sample written to grid.txt")
+
     ###Setting up cubic spline
     N_V = 50000
     N_inner = 20000
@@ -1221,6 +1268,15 @@ def Generate_Fermi_Data(config,cnf):
         sigma = -np.sign(kappa)
         Lambda = np.sqrt(kappa**2 - (Z/C)**2)
 
+        # The matching radius r_c lies where the *true* potential (screened, for potential_index 3)
+        # has converged to its own asymptote, not where it equals the bare nuclear charge. The
+        # analytic Coulomb matching functions must therefore be built from that asymptotic charge.
+        if potential_index == 3:
+            Z_match = -2.0 if Z < 0 else 2.0
+            Lambda_match = np.sqrt(kappa**2 - (Z_match/C)**2)
+        else:
+            Z_match = Z
+            Lambda_match = Lambda
 
         P_list = []
         Q_list = []
@@ -1232,12 +1288,19 @@ def Generate_Fermi_Data(config,cnf):
             eta = ALPHA* Z*W/(k*C)
             Analytic_normalization_const = 1 /Lambda * 1/np.sqrt((Z/C)**2 * (W+C**2)**2 + (kappa + Lambda)**2 *(k*C)**2)
 
+            if potential_index == 3:
+                eta_match = ALPHA* Z_match *W/(k*C)
+                Analytic_normalization_const_match = 1 /Lambda_match * 1/np.sqrt((Z_match/C)**2 * (W+C**2)**2 + (kappa + Lambda_match)**2 *(k*C)**2)
+            else:
+                eta_match = eta
+                Analytic_normalization_const_match = Analytic_normalization_const
+
             if verbose:
                 print(f"Finding wave function for T = {T}, iter = {i}, eta = {eta}")
             rc_idx = find_rc(mesh_points, k, Z, R_au, potential_index, phi_r, potential, verbose)
-            series_terms_upper, series_terms_lower = calc_series_terms(mesh_points, angular_momentum_quantum_number, T, Z, kappa, sigma, derivatives)
+            series_terms_upper, series_terms_lower = calc_series_terms(mesh_points, angular_momentum_quantum_number, T, Z, kappa, sigma, derivatives, verbose=verbose)
             wave_function_upper, wave_function_lower = solve_power_series(series_terms_upper, series_terms_lower, mesh_points)
-            N, delta, r_c = Normalization_Constant(mesh_points, rc_idx ,wave_function_upper,wave_function_lower, Analytic_normalization_const, T, k, eta, W, kappa, Z, Lambda, sigma, R_au, potential_index, phi_r)
+            N, delta, r_c = Normalization_Constant(mesh_points, rc_idx ,wave_function_upper,wave_function_lower, Analytic_normalization_const_match, T, k, eta_match, W, kappa, Z, Lambda_match, sigma, R_au, potential_index, phi_r, Z_match)
 
             P_list.append(N*wave_function_upper)
             Q_list.append(N*wave_function_lower)
@@ -1257,10 +1320,10 @@ def Generate_Fermi_Data(config,cnf):
 
         np.savez_compressed(file_path, T = T_arr, r = r_arr, P = P_arr, Q = Q_arr)
 
-    if verbose:
+    if config.get("generate_z0", False):
         # ---- Z=0 reference wavefunctions (free particle, V=0) ----
-        # Only generated with --verbose; these files are needed by --mode data
-        # if you want E-function / angular-correlation features.
+        # Generated with --verbose (unless --no-z0 is set); needed by --mode data
+        # for the Fermi division plot.
         main_output_directory_z0 = Path(config["paths"]["output_directory"]) / f"Dirac_{config['isotope']}"
         NPZ_output_directory_z0 = main_output_directory_z0 / "NPZ_files"
         NPZ_output_directory_z0.mkdir(parents=True, exist_ok=True)
@@ -1286,7 +1349,7 @@ def Generate_Fermi_Data(config,cnf):
                 k = np.sqrt(T * (T + 2 * C**2)) / C
                 rc_idx = find_rc(mesh_points, k, 0, R_au, 0, 0, potential)
                 series_terms_upper, series_terms_lower = calc_series_terms(
-                    mesh_points, angular_momentum_quantum_number, T, 0, kappa, sigma, derivatives_zero)
+                    mesh_points, angular_momentum_quantum_number, T, 0, kappa, sigma, derivatives_zero, verbose=verbose)
                 wave_function_upper, wave_function_lower = solve_power_series(
                     series_terms_upper, series_terms_lower, mesh_points)
                 N, _, _ = Normalization_Constant(

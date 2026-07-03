@@ -4,9 +4,9 @@
 import json
 import argparse
 
-from scipy.optimize import bracket
 from algorithms.dirac_numerical_radial import Visualize, Generate_Fermi_Data
 from algorithms.radial_data_handler import calc_double_beta_decay_spectrum
+from algorithms.grid_creation import plot_grid_stepsize
 from configurations.isotopes import ISOTOPES
 
 
@@ -36,7 +36,7 @@ def main():
     parser = argparse.ArgumentParser(description="Run double beta decay code")
 
     #Generator parses
-    parser.add_argument("--mode", type = str, choices=["generate", "plot", "data"],  help = f"Run mode: 'generate' or 'plot' or 'data', (default from config: { config["generator"]["mode"]})")
+    parser.add_argument("--mode", type = str, choices=["generate", "plot", "data", "all"],  help = f"Run mode: 'generate', 'plot', 'data', or 'all' (generate + data in sequence), (default from config: { config["generator"]["mode"]})")
     parser.add_argument("--num_samples", type = positive_int, help = f"Number of energy samples generated, (default from config: {config["generator"]["num_samples"]})")
     parser.add_argument("--plot_energy", type = positive_float, help = f"Kinetic energy in MeV for single plot, (default from config: {config["generator"]["T_plot_energy-MeV"]})")
     parser.add_argument("--potential", type = int, choices = [0,1,2,3], help = f"Select potential function, 0: Z/r , 1: Z/r + V0 exp(-Ar) 2: (for r<R); Z/2R (3-(r/R)^2) (for r >= R); Z/r , 3: Thomas-Fermi  , (default from config: {config["generator"]["potential_index"]})")
@@ -57,20 +57,22 @@ def main():
     parser.add_argument("--DRN", type = positive_float, help = f"Upper limit step size grid, (default from config: {config["mesh_grid"]["upper_limit_step_size"]})")
 
     # Isotope selection
-    parser.add_argument("--isotope", type = str, choices = ["Xe136", "Mo100", "Nd150"], help = f"select an isotope from the isotopes.py file for which to run the scripts, (default from config: { config["isotope"]})")
+    parser.add_argument("--isotope", type = str, choices = list(ISOTOPES.keys()), help = f"select an isotope from the isotopes.py file for which to run the scripts, (default from config: { config["isotope"]})")
 
     # Verbosity
     parser.add_argument("-v", "--verbose", action="store_true",
         help="Enable verbose output: show/save all plots and print progress messages. "
              "Without this flag only data files and the results .txt are written.")
+    parser.add_argument("--no-z0", action="store_true", dest="no_z0",
+        help="Skip Z=0 free-particle wavefunction generation even when --verbose is set. "
+             "Speeds up generate mode; Fermi division plot will be unavailable in data mode.")
 
     # Plot selection (data mode only, only meaningful with --verbose)
-    _ALL_PLOTS = ["gf", "fermi", "epsilon", "double_diff"]
+    _ALL_PLOTS = ["gf", "fermi", "epsilon", "double_diff", "electron", "energy_diff", "grid"]
     parser.add_argument("--plots", nargs="*", choices=_ALL_PLOTS, metavar="PLOT",
-        help=f"Which plots to enable in verbose data mode. "
+        help=f"Which plots to show in data mode. "
              f"Choices: {_ALL_PLOTS}. "
-             f"Omit flag to run all; pass '--plots' with no arguments to run none. "
-             f"Ignored unless --verbose is set.")
+             f"Pass '-v' with no '--plots' to run all; pass '--plots' with no args to run none.")
 
 
     args = parser.parse_args()
@@ -122,19 +124,15 @@ def main():
     if args.isotope is not None:
         config["isotope"] = args.isotope
 
-    # Verbose flag drives both plot output and terminal verbosity
-    if args.plots is not None and not args.verbose:
-        parser.error(
-            "--plots requires --verbose (-v) to have any effect. "
-            "Re-run with --verbose (-v) to enable plot output."
-        )
-
     config["verbose"] = args.verbose
-    if args.verbose:
-        # Respect --plots selection; default to all when not specified
-        config["plots"] = args.plots if args.plots is not None else _ALL_PLOTS
+    config["generate_z0"] = args.verbose and not args.no_z0
+
+    # --plots given → use that selection; -v alone → all plots; neither → no plots
+    if args.plots is not None:
+        config["plots"] = args.plots
+    elif args.verbose:
+        config["plots"] = _ALL_PLOTS
     else:
-        # Quiet mode: suppress all plots regardless of --plots
         config["plots"] = []
 
 
@@ -145,26 +143,14 @@ def main():
     potential = config["generator"]["potential_index"]
 
 
-    if potential == 0:
-        potential_name = "pure Coulomb potential V(r) = Z/r"
-    elif potential == 1:
-        potential_name = "Z/r + V0 exp(-Ar)"
-    elif potential== 2:
-       potential_name = "finite size Coulomb potential. (for r<R); V(r) = Z/2R * (3-(r/R)^2), (for r >= R); V(r) = Z/r"
-    elif potential == 3:
-        potential_name =  "Thomas Fermi potential"
-    else:
-        raise RuntimeError("Invaled potential index given")
-
-
     def print_potential(potential_index):
         if potential_index == 0:
             print(f"calling '{mode}' function for potential 0: Z/r")
-        if potential_index == 1:
+        elif potential_index == 1:
             print(f"calling '{mode}' function for potential 1: Z/r + V0 exp(-Ar)")
-        if potential_index == 2:
+        elif potential_index == 2:
             print(f"calling '{mode}' function for potential 2: (for r<R); Z/2R (3-(r/R)^2) , (for r >= R); Z/r")
-        if potential_index == 3:
+        elif potential_index == 3:
             print(f"calling '{mode}' function for potential 3: Thomas Fermi")
 
 
@@ -198,45 +184,28 @@ def main():
         }
 
     
+    if args.verbose:
+        print_potential(potential)
+
+    if mode == "data" and config["plots"] == ["grid"]:
+        plot_grid_stepsize()
+        return
+
     if mode == "generate":
         if args.verbose:
-            print_potential(potential)
-            print(f"Saving output in \\{config["paths"]["output_directory"]} directory")
-        Generate_Fermi_Data(config,cnf)
+            print(f"Saving output in {config['paths']['output_directory']} directory")
+        Generate_Fermi_Data(config, cnf)
     elif mode == "plot":
-        if args.verbose:
-            print_potential(potential)
-        Visualize(config,cnf)
+        Visualize(config, cnf)
     elif mode == "data":
+        calc_double_beta_decay_spectrum(config, cnf)
+    elif mode == "all":
         if args.verbose:
-            print_potential(potential)
-        calc_double_beta_decay_spectrum(config,cnf)
-    elif mode == None:
-        iso = config["isotope"]
-        model = config["nuclear_model"]
-        
-
-
-
-        print(f"Generating data for {iso} using {model} model with {potential_name}")
-        if config["paths"]["output_directory"] is None:
-            print(f"Output is sent to Dirac_{config["isotope"]}")
-        else:
-            print(f"Output is sent to {config["paths"]["output_directory"]}")
-
-        Generate_Fermi_Data(config,cnf)
-
-        print(f"Generating data complete ")
-        print(f"Calculating phase space results and plotting Fermi function and 2νββ Spectrum\n")
-        calc_double_beta_decay_spectrum(config,cnf)
-
-        print("Done")
-
-
-
-
+            print(f"Saving output in {config['paths']['output_directory']} directory")
+        Generate_Fermi_Data(config, cnf)
+        calc_double_beta_decay_spectrum(config, cnf)
     else:
-        raise ValueError("Unkown mode: {mode}")
+        raise ValueError(f"Unknown mode: {mode}")
 
 
 if __name__ == "__main__":

@@ -1,10 +1,12 @@
 #Ignore all files
+*.pdf
 *.npz
 *.txt
 *-swp
 # Ignore directories
 CLAUDE.md
 out*
+fortran*
 out_fortran/
 plots/
 phase_space_results/
