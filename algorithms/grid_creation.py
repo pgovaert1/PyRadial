@@ -218,6 +218,7 @@ def plot_grid_stepsize():
     ax.set_ylabel(r'Step size $\Delta r_i$ (a.u.)', fontsize=12)
     ax.set_ylim(bottom=0)
     ax.grid(True, alpha=0.3)
+    ax.set_title('Grid step size vs grid index', fontsize=14)
     ax.legend(fontsize=10)
 
     # Inset: zoom into the final iterations to show the asymptotic approach
