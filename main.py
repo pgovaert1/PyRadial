@@ -5,7 +5,7 @@ import json
 import argparse
 
 from algorithms.dirac_numerical_radial import Visualize, Generate_Fermi_Data
-from algorithms.radial_data_handler import calc_double_beta_decay_spectrum
+from algorithms.radial_data_handler import calc_double_beta_decay_spectrum, compare_G_factors_across_potentials
 from algorithms.grid_creation import plot_grid_stepsize
 from configurations.isotopes import ISOTOPES
 
@@ -66,6 +66,12 @@ def main():
     parser.add_argument("--no-z0", action="store_true", dest="no_z0",
         help="Skip Z=0 free-particle wavefunction generation even when --verbose is set. "
              "Speeds up generate mode; Fermi division plot will be unavailable in data mode.")
+    parser.add_argument("--G_comparison", action="store_true",
+        help="Standalone action: write a G0/G2/G4/G22 comparison across potential "
+             "schemes 0/2/3 to a .txt file, directly from existing NPZ files (no "
+             "regeneration, no plots, no other analysis). Runs instead of --mode. "
+             "Requires pre-generated NPZ data for each potential (run 'generate' "
+             "with --potential 0/2/3 first).")
 
     # Plot selection (data mode only, only meaningful with --verbose)
     _ALL_PLOTS = ["gf", "fermi", "epsilon", "double_diff", "electron", "energy_diff", "grid"]
@@ -126,6 +132,7 @@ def main():
 
     config["verbose"] = args.verbose
     config["generate_z0"] = args.verbose and not args.no_z0
+    config["G_comparison"] = args.G_comparison
 
     # --plots given → use that selection; -v alone → all plots; neither → no plots
     if args.plots is not None:
@@ -177,6 +184,7 @@ def main():
         "Q": isotope_data["Q"],
         "Simkovic_Gs": isotope_data["G_values"].get(scheme) if scheme else None,
         "Simkovic_Hs": isotope_data["H_values"].get(scheme) if scheme else None,
+        "G_values": isotope_data["G_values"],
         "nuclear_matrix_elements": isotope_data["nuclear_matrix_elements"],
 
         "angular_momentum_l": config["parameters"]["angular_momentum_l"],
@@ -184,11 +192,15 @@ def main():
         }
 
     
+    if config["G_comparison"]:
+        compare_G_factors_across_potentials(config, cnf)
+        return
+
     if args.verbose:
         print_potential(potential)
 
     if mode == "data" and config["plots"] == ["grid"]:
-        plot_grid_stepsize()
+        plot_grid_stepsize(config["paths"]["output_directory"])
         return
 
     if mode == "generate":

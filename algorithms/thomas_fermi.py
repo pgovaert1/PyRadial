@@ -10,7 +10,7 @@ mp.mp.dps = 30
 ### Thomas-Fermi
 ##################
 
-def solve_thomas_fermi(tsteps, Nmax, dps):
+def solve_thomas_fermi(tsteps, Nmax):
     a = [1, 9 - np.sqrt(73)]
 
 
@@ -48,15 +48,15 @@ def solve_thomas_fermi(tsteps, Nmax, dps):
     return x_vals, phi_vals
 
 
-def make_phi_x(tsteps, Nmax, dps):
-    x_vals, phi_vals = solve_thomas_fermi(tsteps, Nmax, dps)
+def make_phi_x(tsteps, Nmax):
+    x_vals, phi_vals = solve_thomas_fermi(tsteps, Nmax)
 
     phi_interp = interp1d(x_vals, phi_vals, kind ="linear", bounds_error=False, fill_value=(1.0, 0.0))
 
     return phi_interp
 
-def make_phi_r(Z, tsteps=200, Nmax=100, dps=60):
-    phi_x = make_phi_x(tsteps, Nmax, dps)
+def make_phi_r(Z, tsteps=200, Nmax=100):
+    phi_x = make_phi_x(tsteps, Nmax)
 
     b_au = 0.8853 * Z **(-1.0/3.0)
 

@@ -5,7 +5,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.interpolate import CubicSpline
 import mpmath as mp
-from scipy.special import spherical_jn
 from tqdm import tqdm
 from pathlib import Path
 from configurations.physics_constants import ALPHA, C, EPSILON, AU, E_HARTREE, R0
@@ -302,13 +301,6 @@ def singular_power_series_terms(u_array, r_b, l ,Z , kappa, sigma):
             S_b_val = Neumaier_value(S_b, Sb_c)
             S_an_val = Neumaier_value(S_an, San_c)
             S_bn_val = Neumaier_value(S_bn, Sbn_c)
-
-            # S_a += an
-            # S_b += bn
-            #
-            # S_an += n * an
-            # S_bn += n * bn
-
 
             tolerance = EPSILON * max(abs(S_a_val), abs(S_b_val), abs(S_an_val)/n, abs(S_bn_val)/n)
             if max(abs(an) , abs(bn)) < tolerance:
@@ -968,108 +960,11 @@ def Normalization_Constant(grid_points, idx_rc, P_array, Q_array, Analytic_norma
 
 
 
-# ========== Solve for analytic Coulomb wavefunctions ==========
-
-def Analytic(Z,eta, k, W, kappa, Lambda, Analytic_normalization_const, T, delta, N_points, rc):
-    """
-    Calculates the anlytical pure coulomb solutions of P and Q using mpmath CoulombF and
-    CoulombG functions around the matching radius. For the case (Z=0) uses scipy.special
-    spherical_jn function instead.
-
-    Parameters
-    ----------
-    Z : int
-        Atomic number.
-    eta : float
-        Relativistic Sommerfeld parameter
-    k : float
-        Relativistic wave number.
-    W : float
-        Total relativistic energy (kinetic + rest energy).
-    kappa : int
-        Relativistic angular momentum quantum number (See eq 2.19b Radial Fortran subroutine by Francesc Salvat).
-    Lambda :
-        Lambda parameter defined as sqrt(kappa^2 - (alpha Z)^2).
-    Analytic_normalization_const : float
-        Analytic normalization constant as calculated in eq 3.122 in 'RADIAL: a Fortran subroutine by Francesc Salvat'.
-    T : float
-        Kinetic energy in Hartree units.
-    delta : float
-        Phase shift of the wave functions P and Q.
-    N_points : int
-        Resolution of the r grid used to calculate P and Q
-    rc : float
-        Matching radius point on grid_points.
-
-    Returns
-    -------
-    r : ndarray
-        1d linear grid around the matching radius [max(rc-1.5), rc + 1.5)]
-    P: ndarray
-        Wavefunction values of P(r)
-    Q : ndarray
-        Wavefunction values of Q(r)
-
-    """
-
-    r = np.linspace(max(0,rc-1.5),rc+1.5,N_points)
-    if abs(Z) == 0:
-        x = k * r
-        mult_fact = np.sqrt(T / (T+2*C**2))
-        if kappa < 0:
-            l = -kappa - 1
-            P = x * spherical_jn(l, x)
-            Q = -mult_fact * x * spherical_jn(l+1 , x)
-        else:
-            l = kappa
-            P = x * spherical_jn(l, x)
-            Q = mult_fact * x * spherical_jn(l-1, x)
-    else:
-
-        def CoulombF_reduced(l,Z,r_array):
-
-            r_array = np.asarray(r_array, dtype= float)
-            u_vals = np.empty_like(r_array, dtype =float)
-
-            for i, r in enumerate (tqdm(r_array, desc = f"calculating coulombf for l={l}")):
-                u_vals[i] =float(mp.coulombf(l,eta,k*r))
-
-            return u_vals
-
-        def CoulombG_reduced(l,Z,r_array):
-
-            r_array = np.asarray(r_array, dtype= float)
-            u_vals = np.empty_like(r_array, dtype =float)
-
-            for i, r in enumerate (tqdm(r_array, desc= f"calculating coulombg for l = {l}")):
-                u_vals[i] =float(mp.coulombg(l, eta ,k * r))
-
-            return u_vals
-
-        U_reg_lambda = CoulombF_reduced(Lambda,Z,r)
-        U_reg_lambda_min = CoulombF_reduced(Lambda-1 ,Z,r)
-
-        G_lambda = CoulombG_reduced(Lambda,Z,r)
-        G_lambda_min = CoulombG_reduced(Lambda -1, Z,r)
-
-        Dirac_upper_analytic = Analytic_normalization_const * ((kappa+Lambda) * np.sqrt(Lambda**2 + eta**2)*k*C*U_reg_lambda + Z/C * (Lambda * C**2 - kappa * W) * U_reg_lambda_min)
-
-        Dirac_lower_analytic = -Analytic_normalization_const * (Z/C * np.sqrt(Lambda**2 + eta**2)*k*C*U_reg_lambda + (kappa + Lambda) * (Lambda* C**2 - kappa * W )* U_reg_lambda_min)
-
-        irreg_Dirac_upper_analytic = Analytic_normalization_const * ((kappa+Lambda) * np.sqrt(Lambda**2 + eta**2)*k*C* G_lambda + Z/C * (Lambda * C**2 - kappa * W) * G_lambda_min)
-
-        irreg_Dirac_lower_analytic = -Analytic_normalization_const * (Z/C * np.sqrt(Lambda**2 + eta**2)*k*C* G_lambda + (kappa + Lambda) * (Lambda* C**2 - kappa * W )* G_lambda_min)
-
-
-        P = np.cos(delta) * Dirac_upper_analytic + np.sin(delta) * irreg_Dirac_upper_analytic
-        Q = np.cos(delta) * Dirac_lower_analytic + np.sin(delta) * irreg_Dirac_lower_analytic
-
-    return r,P, Q
-
 # ========== Visualization of wavefunctions ==========
 
 def Visualize(config,cnf):
     ### DECLARE PARAMETERS
+    verbose = config.get("verbose", False)
     A = cnf["A"]
     Zf = cnf["Z"]
     Z = -Zf
@@ -1083,7 +978,8 @@ def Visualize(config,cnf):
 
     potential_index = config["generator"]["potential_index"]
     if potential_index == 3:
-        print("calculating thomas fermi func")
+        if verbose:
+            print("calculating thomas fermi func")
         phi_r = make_phi_r(Zf)
     else:
         phi_r = 0
@@ -1101,7 +997,7 @@ def Visualize(config,cnf):
     DRN = config["mesh_grid"]["upper_limit_step_size"]#Upper limit on distance between points near the end regime (make sure this stays small enough or wavefunc will not converge at larger distances r)
 
 
-    r_END = obtain_mesh_range(k, Z, R_au, potential_index, phi_r, potential)
+    r_END = obtain_mesh_range(k, Z, R_au, potential_index, phi_r, potential, verbose=verbose)
 
     if r_N is None:
         r_N = 10000
@@ -1112,7 +1008,8 @@ def Visualize(config,cnf):
         r_N += 5000
         A_grid = ((r_END - (r_N - 1) *r2) / r_END) * (DRN / (DRN -r2))
 
-    print(f"resolution set to {r_N} mesh points")
+    if verbose:
+        print(f"resolution set to {r_N} mesh points")
     mesh_points = radial_grid(r_END, A_grid, r_N, r2, DRN, R_au)
     rc_idx = find_rc(mesh_points, k, Z, R_au, potential_index, phi_r, potential)
 
@@ -1132,7 +1029,7 @@ def Visualize(config,cnf):
 
 
 
-    series_terms_upper, series_terms_lower = calc_series_terms(mesh_points, angular_momentum_quantum_number, T, Z, kappa, sigma, derivatives, verbose=config.get("verbose", False))
+    series_terms_upper, series_terms_lower = calc_series_terms(mesh_points, angular_momentum_quantum_number, T, Z, kappa, sigma, derivatives, verbose=verbose)
     wave_function_upper, wave_function_lower = solve_power_series(series_terms_upper, series_terms_lower, mesh_points)
 
     # The matching radius r_c lies where the *true* potential (screened, for potential_index 3)
@@ -1162,13 +1059,13 @@ def Visualize(config,cnf):
     plt.grid(True)
     plt.title(f"E = {T: .2g}, Z = {Z}, A = {N: .5g}, delta = {delta: .3g}, N = {r_N}, DRN = {DRN} , r2 = {r2}, r_end = {r_END}, r_c = {r_c: .3g}")
     plt.legend()
-    if config.get("verbose", True):
+    if verbose:
         plt.show()
 
 
 def Generate_Fermi_Data(config,cnf):
     ### DECLARE PARAMETERS
-    verbose = config.get("verbose", True)
+    verbose = config.get("verbose", False)
     A = cnf["A"]
     Zf = cnf["Z"]
     Z = -Zf
@@ -1199,7 +1096,7 @@ def Generate_Fermi_Data(config,cnf):
     DRN = config["mesh_grid"]["upper_limit_step_size"]#Upper limit on distance between points near the end regime (make sure this stays small enough or wavefunc will not converge at larger distances r)
 
     k_max = np.sqrt(T_range[0]*(T_range[0] + 2*C**2))/C
-    r_END = obtain_mesh_range(k_max, Z, R_au, potential_index, phi_r, potential)
+    r_END = obtain_mesh_range(k_max, Z, R_au, potential_index, phi_r, potential, verbose=verbose)
 
     if r_N is None:
         r_N = 10000
@@ -1337,7 +1234,8 @@ def Generate_Fermi_Data(config,cnf):
         kappa = config["parameters"]["kappa"]
         for i, sign in enumerate(kappa_sign):
             kappa *= sign
-            print(f"Z=0 run ({i+1}/{len(kappa_sign)}) with kappa = {kappa:+d}")
+            if verbose:
+                print(f"Z=0 run ({i+1}/{len(kappa_sign)}) with kappa = {kappa:+d}")
             sigma = -np.sign(kappa)
             Lambda_z0 = float(abs(kappa))  # sqrt(kappa^2 - 0)
 

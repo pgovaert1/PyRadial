@@ -5,7 +5,7 @@ from scipy.integrate import nquad
 from scipy.integrate import quad
 from pathlib import Path
 import os
-from configurations.physics_constants import ME, GF, VUD, HBAR_C, GA, E_HARTREE
+from configurations.physics_constants import ME, GF, VUD, HBAR_C, GA, E_HARTREE, TLIT
 from algorithms.integrands import (two_electron_kernel, two_electron_spectrum_integrand,
                                     spectrum_epsilon_integrand, single_electron_spectrum_integrand,
                                     energy_diff_spectrum_integrand,
@@ -33,7 +33,7 @@ MeVtoyr = (365.25 * 24 * 3600) * 2.998e8 / (1e-15 * HBAR_C)
 
 
 
-def load_data(directory_name, file_name, verbose=True):
+def load_data(directory_name, file_name, verbose=False):
     """
     Extracts Energy T, radial grid r, upper component wave function P and lower component
     wave function Q from the given .npz file.
@@ -139,9 +139,104 @@ def calculate_phase_space_factors(Q, Fermi_analytic, Fermi_numeric, E_numeric, n
     }
 
 
+def compare_G_factors_across_potentials(config, cnf):
+    """
+    Compute the numeric G0, G2, G4, and G22 phase-space factors for potentials
+    0, 2, and 3 using already-generated wavefunction data, and write a labeled
+    comparison to a .txt file. Potentials whose NPZ data hasn't been generated
+    yet are skipped with a warning and reported as N/A. If no Simkovic reference
+    is available for a scheme, only the numeric results are printed for it.
+    """
+    verbose = config.get("verbose", False)
+    Z = cnf["Z"]
+    A = cnf["A"]
+    Q = cnf["Q"]
+    nuclear_matrix_elements = cnf["nuclear_matrix_elements"]
+    G_values = cnf.get("G_values", {})
+
+    rN = 1.2 * A ** (1 / 3) / HBAR_C
+    Fermi_analytic = lambda Ee: Fermi(Ee, Z, A, rN)
+
+    main_output_directory = Path(config["paths"]["output_directory"]) / f"Dirac_{config['isotope']}"
+    results_output_directory = main_output_directory / "phase_space_results"
+    results_output_directory.mkdir(parents=True, exist_ok=True)
+    output_path = results_output_directory / f"G_factors_comparison_Z{Z}_A{A}.txt"
+
+    _standard_npz_dir = Path("output") / f"Dirac_{config['isotope']}" / "NPZ_files"
+
+    scheme_map = {
+        0: ("B", "pure Coulomb"),
+        2: ("A", "finite-size Coulomb"),
+        3: ("C", "Thomas-Fermi"),
+    }
+    tag_labels = ["G0", "G2", "G4", "G22"]
+
+    rows = []
+    for potential_index, (scheme, label) in scheme_map.items():
+        directory_name = main_output_directory / "NPZ_files"
+        file_name_kappa_n = f"{config['isotope']}_potential_{potential_index}_kappa_-1_Z{Z}_A{A}.npz"
+        file_name_kappa_p = f"{config['isotope']}_potential_{potential_index}_kappa_+1_Z{Z}_A{A}.npz"
+
+        if not (directory_name / file_name_kappa_n).exists() and directory_name != _standard_npz_dir:
+            directory_name = _standard_npz_dir
+
+        if not (directory_name / file_name_kappa_n).exists() or not (directory_name / file_name_kappa_p).exists():
+            print(
+                f"[WARNING] Skipping potential {potential_index} ({label}): no NPZ data found in "
+                f"'{directory_name}'. Run 'python main.py --mode generate --potential {potential_index}' first."
+            )
+            rows.append((potential_index, scheme, label, None, None))
+            continue
+
+        T_n, r_n, P_n, Q_n = load_data(directory_name, file_name_kappa_n, verbose=verbose)
+        T_p, r_p, P_p, Q_p = load_data(directory_name, file_name_kappa_p, verbose=verbose)
+        idx_R, mesh_point_R_au = find_mesh_point_R_au(r_n, rN, verbose=verbose)
+        data = {"T": T_n, "P_n": P_n, "P_n_Z0": None, "Q_p": Q_p, "Q_p_Z0": None,
+                "idx_R": idx_R, "mesh_point_R_au": mesh_point_R_au}
+
+        Fermi_numeric = lambda Ee, data=data: Fermi_numerical(Ee, Z, data)
+        E_numeric = lambda Ee, data=data: E_function(Ee, Z, A, data)
+
+        phase_space_data = calculate_phase_space_factors(Q, Fermi_analytic, Fermi_numeric, E_numeric, nuclear_matrix_elements)
+        G_num = phase_space_data["G_results_num"]
+
+        ref = G_values.get(scheme)
+        rows.append((potential_index, scheme, label, G_num, ref))
+
+    with open(output_path, "w") as f:
+        f.write(f"G-factor comparison across potential schemes -- {config['isotope']} (Z={Z}, A={A})\n")
+        f.write("=" * 70 + "\n")
+        for potential_index, scheme, label, G_num, ref in rows:
+            f.write(f"\nPotential {potential_index} ({scheme}, {label}):\n")
+            if G_num is None:
+                f.write("  G0, G2, G4, G22 (numeric) = N/A (wavefunction data not generated)\n")
+                continue
+            for i, tag in enumerate(tag_labels):
+                f.write(f"  {tag} (numeric)              = {G_num[i]:.6e}\n")
+                if ref is not None:
+                    percent_diff = (G_num[i] - ref[i]) / ref[i] * 100
+                    f.write(f"  {tag} (Simkovic ref, {scheme})     = {ref[i]:.6e}\n")
+                    f.write(f"  Percent difference        = {percent_diff:+.4f}%\n")
+
+        f.write("\n\n")
+        f.write(f"G_N comparison across potentials (numeric) -- {config['isotope']} (Z={Z}, A={A})\n")
+        f.write("=" * 70 + "\n")
+        for i, tag in enumerate(tag_labels):
+            f.write(f"\n{tag}:\n")
+            for potential_index, scheme, label, G_num, ref in rows:
+                potential_str = f"Potential {potential_index} ({scheme}, {label})"
+                if G_num is None:
+                    f.write(f"  {potential_str:<45} = N/A\n")
+                else:
+                    f.write(f"  {potential_str:<45} = {G_num[i]:.6e}\n")
+
+    if verbose:
+        print(f"\nG-factor potential comparison written to: {output_path}")
+
+
 # ========== TOTAL GAMMA COMPARISON ==========
 
-def compute_and_compare_total_gamma(Q, Fermi_numeric, E_numeric, nuclear_matrix_elements, phase_space_data, verbose=True):
+def compute_and_compare_total_gamma(Q, Fermi_numeric, E_numeric, nuclear_matrix_elements, phase_space_data, verbose=False):
     """
     Integrate dΓ/(dEe1 dEe2 d(cos θ)) over all three variables and compare
     the result with the phase-space combination
@@ -334,7 +429,7 @@ def compute_kappa_weighted_average(Q, Fermi_numeric, E_numeric, nuclear_matrix_e
 
 # ========== DATA FILE OUTPUT (always written, independent of verbose) ==========
 
-def save_fermi_function(Q, Z, A, Fermi_numeric, E_numeric, output_dir, potential_index):
+def save_fermi_function(Q, Z, A, Fermi_numeric, E_numeric, output_dir, potential_index, verbose=False):
     """
     Evaluate and save the numeric Fermi function F(Ee) and E-function E(Ee)
     on a fine energy grid to an NPZ file.
@@ -355,17 +450,20 @@ def save_fermi_function(Q, Z, A, Fermi_numeric, E_numeric, output_dir, potential
         Directory in which to write the file.
     potential_index : int
         Used in the output filename.
+    verbose : bool
+        If True, print the path the file was saved to.
     """
     E_grid = np.linspace(ME + 1e-3, Q + ME, 2000)
     F_vals = np.array([Fermi_numeric(e) for e in E_grid])
     E_vals = np.array([E_numeric(e)     for e in E_grid])
     path = Path(output_dir) / f"fermi_function_potential_{potential_index}_Z{Z}_A{A}.npz"
     np.savez_compressed(path, E=E_grid, F_numeric=F_vals, E_function=E_vals)
-    print(f"Fermi function saved  → {path}")
+    if verbose:
+        print(f"Fermi function saved  → {path}")
 
 
 def save_triple_differential_grid(Q, Fermi_numeric, E_numeric, nuclear_matrix_elements,
-                                   output_dir, potential_index, Z, A, n_Ee=40, n_cos=20):
+                                   output_dir, potential_index, Z, A, n_Ee=40, n_cos=20, verbose=False):
     """
     Evaluate dΓ/(dEe1 dEe2 d(cos θ)) on a regular (Ee1, Ee2, cos θ) grid
     and save the result to an NPZ file.  Points outside the kinematic boundary
@@ -391,6 +489,8 @@ def save_triple_differential_grid(Q, Fermi_numeric, E_numeric, nuclear_matrix_el
         Number of grid points along each energy axis.
     n_cos : int
         Number of grid points along the cos(θ) axis.
+    verbose : bool
+        If True, print the path the file was saved to.
     """
     Ee1_grid = np.linspace(ME + 1e-3, Q + ME, n_Ee)
     Ee2_grid = np.linspace(ME + 1e-3, Q + ME, n_Ee)
@@ -408,7 +508,8 @@ def save_triple_differential_grid(Q, Fermi_numeric, E_numeric, nuclear_matrix_el
 
     path = Path(output_dir) / f"triple_differential_potential_{potential_index}_Z{Z}_A{A}.npz"
     np.savez_compressed(path, Ee1=Ee1_grid, Ee2=Ee2_grid, cos_theta=cos_grid, integrand=integrand)
-    print(f"Triple-differential grid saved  → {path}")
+    if verbose:
+        print(f"Triple-differential grid saved  → {path}")
 
 
 # ========== FERMI FUNCTION PLOTTING ==========
@@ -703,8 +804,8 @@ def calculate_and_plot_single_electron_spectra(Q, Z, A, Fermi_analytic, Fermi_nu
     norm_ana = spec_Ee1_ana / total_rate_ana if show_analytic and total_rate_ana else None
 
     fig, ax1 = plt.subplots(1, 1, figsize=(12, 5))
-    # if norm_ana is not None:
-    #     ax1.plot(T_grid, norm_ana, lw=1.5, label="Analytic")
+    if norm_ana is not None:
+        ax1.plot(T_grid, norm_ana, lw=1.5, label="Analytic")
     ax1.plot(T_grid, norm_num, lw=1.5, label="Numeric")
     ax1.set_xlabel(r"Kinetic energy $T = E_e - m_e$ (MeV)")
     ax1.set_ylabel(r"$1/\Gamma\;d\Gamma/dE_e$")
@@ -728,7 +829,7 @@ def calculate_and_plot_single_electron_spectra(Q, Z, A, Fermi_analytic, Fermi_nu
 
 # ========== dGamma/dEe1dEe2dcos(θ) SPECTRUM CALCULATION AND PLOTTING ==========
 
-def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fermi_numeric, E_function_numeric, plots_output_directory, potential_index, nuclear_matrix_elements, isotope, phase_space_data=None):
+def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fermi_numeric, E_function_numeric, plots_output_directory, potential_index, nuclear_matrix_elements, isotope, phase_space_data=None, verbose=False):
     """
     Calculate and plot the double-differential spectrum dΓ/dEe1dEe2 for 2νββ decay.
     
@@ -797,11 +898,12 @@ def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fer
     Ee2_grid = np.linspace(ME + 1e-3, Q + ME, 40)
     cos_theta_grid = np.linspace(-1.0, 1.0, 20)
 
-    print(f"Calculating triple-differential spectrum using integration:")
-    print(f"  Ee1 range: [{Ee1_grid[0]:.3f}, {Ee1_grid[-1]:.3f}] MeV with {len(Ee1_grid)} evaluation points")
-    print(f"  Ee2 range: [{Ee2_grid[0]:.3f}, {Ee2_grid[-1]:.3f}] MeV with {len(Ee2_grid)} evaluation points")
-    print(f"  cos(θ) range: [{cos_theta_grid[0]:.2f}, {cos_theta_grid[-1]:.2f}] with {len(cos_theta_grid)} evaluation points")
-    print(f"  Note: INTEGRATING over cos(θ) to obtain dΓ/(dEe1 dEe2) at each energy pair")
+    if verbose:
+        print(f"Calculating triple-differential spectrum using integration:")
+        print(f"  Ee1 range: [{Ee1_grid[0]:.3f}, {Ee1_grid[-1]:.3f}] MeV with {len(Ee1_grid)} evaluation points")
+        print(f"  Ee2 range: [{Ee2_grid[0]:.3f}, {Ee2_grid[-1]:.3f}] MeV with {len(Ee2_grid)} evaluation points")
+        print(f"  cos(θ) range: [{cos_theta_grid[0]:.2f}, {cos_theta_grid[-1]:.2f}] with {len(cos_theta_grid)} evaluation points")
+        print(f"  Note: INTEGRATING over cos(θ) to obtain dΓ/(dEe1 dEe2) at each energy pair")
 
     # ========== COMPUTE TRIPLE-DIFFERENTIAL SPECTRUM FOR REFERENCE ==========
     spectrum_triple_diff_numeric = np.zeros((len(Ee1_grid), len(Ee2_grid), len(cos_theta_grid)))
@@ -838,7 +940,7 @@ def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fer
     limit_angle = 5000
 
     for i, Ee1 in enumerate(Ee1_grid):
-        if i % 5 == 0:
+        if verbose and i % 5 == 0:
             print(f"  Processing Ee1 point {i+1}/{len(Ee1_grid)}")
 
         for j, Ee2 in enumerate(Ee2_grid):
@@ -869,11 +971,12 @@ def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fer
             spectrum_double_diff_numeric[i, j] = max(integral_numeric, 0.0)
 
     # ========== COMPUTE DIRECT SPECTRUM USING two_electron_kernel ==========
-    print("Computing direct two-electron kernel spectrum for verification...")
+    if verbose:
+        print("Computing direct two-electron kernel spectrum for verification...")
     spectrum_direct_numeric = np.zeros((len(Ee1_grid), len(Ee2_grid)))
 
     for i, Ee1 in enumerate(Ee1_grid):
-        if i % 5 == 0:
+        if verbose and i % 5 == 0:
             print(f"  Direct computation - Ee1 point {i+1}/{len(Ee1_grid)}")
         for j, Ee2 in enumerate(Ee2_grid):
             if Ee1 + Ee2 > Q + 2*ME:
@@ -885,7 +988,8 @@ def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fer
             )
 
     # ========== PLOT 1: 2D CONTOURS - DOUBLE DIFFERENTIAL SPECTRUM ==========
-    print("\nGenerating double-differential spectrum contour plots...")
+    if verbose:
+        print("\nGenerating double-differential spectrum contour plots...")
 
     if show_analytic:
         fig, axes = plt.subplots(1, 3, figsize=(14, 5))
@@ -1005,11 +1109,12 @@ def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fer
         plt.tight_layout()
         plt.savefig(os.path.join(plots_output_directory, f"DoublesDiff_Spectrum_Normalized_Numeric_Kinematic_potential_{potential_index}_Z{Z}_A{A}.png"), dpi=300, bbox_inches='tight')
         plt.show()
-    else:
+    elif verbose:
         print("Skipping normalized plot: phase_space_data not provided.")
 
     # ========== VERIFICATION: Compare integrated vs direct methods ==========
-    print("\nVerification: Comparing integration and direct methods...")
+    if verbose:
+        print("\nVerification: Comparing integration and direct methods...")
     with np.errstate(divide='ignore', invalid='ignore'):
         percent_diff_methods = 100.0 * (spectrum_double_diff_numeric - spectrum_direct_numeric) / (np.abs(spectrum_direct_numeric) + 1e-30)
         percent_diff_methods[~np.isfinite(percent_diff_methods)] = 0.0
@@ -1025,13 +1130,14 @@ def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fer
     plt.show()
 
     diff_valid = percent_diff_methods[np.isfinite(percent_diff_methods)]
-    if len(diff_valid) > 0:
+    if verbose and len(diff_valid) > 0:
         print(f"  Mean difference: {np.mean(np.abs(diff_valid)):.4f}%")
         print(f"  Max difference: {np.max(np.abs(diff_valid)):.4f}%")
         print(f"  Median difference: {np.median(np.abs(diff_valid)):.4f}%")
 
     # ========== PLOT 2: ANGULAR DEPENDENCE AT FIXED ENERGIES ==========
-    print("Generating angular dependence plots...")
+    if verbose:
+        print("Generating angular dependence plots...")
 
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
     fig.suptitle(rf'{isotope}: Angular Integrand Shape: $d\Gamma/(dE_{{e_1}}\,dE_{{e_2}}\,d(\cos\theta))$ at Different Energy Pairs - {potential_label}', fontsize=14)
@@ -1063,13 +1169,14 @@ def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fer
     plt.show()
 
     # ========== INTEGRATE OVER Ee1 → dΓ/(dEe2 d(cos θ)) ==========
-    print("\nComputing dΓ/(dEe2 d(cos θ)) by integrating over Ee1...")
+    if verbose:
+        print("\nComputing dΓ/(dEe2 d(cos θ)) by integrating over Ee1...")
 
     spectrum_dEe2_dcos_theta_numeric = np.zeros((len(Ee2_grid), len(cos_theta_grid)))
     spectrum_dEe2_dcos_theta_analytic = np.zeros_like(spectrum_dEe2_dcos_theta_numeric)
 
     for j, Ee2 in enumerate(Ee2_grid):
-        if j % 5 == 0:
+        if verbose and j % 5 == 0:
             print(f"  Processing Ee2 point {j+1}/{len(Ee2_grid)}")
         for k, cos_theta in enumerate(cos_theta_grid):
             Ee1_min = ME
@@ -1101,13 +1208,14 @@ def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fer
             spectrum_dEe2_dcos_theta_numeric[j, k] = max(integral_numeric, 0.0)
 
     # ========== INTEGRATE OVER Ee2 → dΓ/(dEe1 d(cos θ)) ==========
-    print("Computing dΓ/(dEe1 d(cos θ)) by integrating over Ee2...")
+    if verbose:
+        print("Computing dΓ/(dEe1 d(cos θ)) by integrating over Ee2...")
 
     spectrum_dEe1_dcos_theta_numeric = np.zeros((len(Ee1_grid), len(cos_theta_grid)))
     spectrum_dEe1_dcos_theta_analytic = np.zeros_like(spectrum_dEe1_dcos_theta_numeric)
 
     for i, Ee1 in enumerate(Ee1_grid):
-        if i % 5 == 0:
+        if verbose and i % 5 == 0:
             print(f"  Processing Ee1 point {i+1}/{len(Ee1_grid)}")
         for k, cos_theta in enumerate(cos_theta_grid):
             Ee2_min = ME
@@ -1139,7 +1247,8 @@ def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fer
             spectrum_dEe1_dcos_theta_numeric[i, k] = max(integral_numeric, 0.0)
 
     # ========== PLOT 3: dΓ/(dEe2 d(cos θ)) ==========
-    print("Generating dΓ/(dEe2 d(cos θ)) contour plots...")
+    if verbose:
+        print("Generating dΓ/(dEe2 d(cos θ)) contour plots...")
 
     if show_analytic:
         fig, axes = plt.subplots(1, 2, figsize=(14, 6))
@@ -1163,7 +1272,8 @@ def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fer
     plt.show()
 
     # ========== PLOT 4: dΓ/(dEe1 d(cos θ)) ==========
-    print("Generating dΓ/(dEe1 d(cos θ)) contour plots...")
+    if verbose:
+        print("Generating dΓ/(dEe1 d(cos θ)) contour plots...")
 
     if show_analytic:
         fig, axes = plt.subplots(1, 2, figsize=(14, 6))
@@ -1188,7 +1298,8 @@ def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fer
 
     # ========== PLOT 5: NUMERIC vs ANALYTIC % DIFF (Coulomb only) ==========
     if show_analytic:
-        print("Generating relative difference plots...")
+        if verbose:
+            print("Generating relative difference plots...")
         with np.errstate(divide='ignore', invalid='ignore'):
             percent_diff = 100.0 * (spectrum_double_diff_numeric - spectrum_double_diff_analytic) / (np.abs(spectrum_double_diff_analytic) + 1e-20)
             percent_diff[~np.isfinite(percent_diff)] = 0.0
@@ -1203,7 +1314,8 @@ def calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fer
         plt.savefig(os.path.join(plots_output_directory, f"DoubleDiff_Difference_potential_{potential_index}_Z{Z}_A{A}.png"), dpi=300, bbox_inches='tight')
         plt.show()
 
-    print("\nTriple-differential spectrum calculation complete!")
+    if verbose:
+        print("\nTriple-differential spectrum calculation complete!")
 
     return {
         "Ee1_grid": Ee1_grid,
@@ -1387,7 +1499,7 @@ def write_results_to_file(results_output_path, config, potential_index, Z, A, G_
         f.write("-" * 40 + "\n")
         f.write(f"Calculated (Analytic):  {halflife:.6e} yr\n")
         f.write(f"Calculated (Numeric):   {halflife_num:.6e} yr\n")
-        f.write(f"Experimental:           {2.19e21:.6e} yr\n\n")
+        f.write(f"Experimental:           {TLIT:.6e} yr\n\n")
 
         # ========== Decay rates ==========
         if total_rate is not None:
@@ -1447,7 +1559,7 @@ def calc_double_beta_decay_spectrum(config, cnf):
         Isotope configuration dictionary with Z, A, Q values
     """
     # ========== SETUP ==========
-    verbose = config.get("verbose", True)
+    verbose = config.get("verbose", False)
     Z = cnf["Z"]
     A = cnf["A"]
     Q = cnf["Q"]
@@ -1491,6 +1603,14 @@ def calc_double_beta_decay_spectrum(config, cnf):
     if z0_n_path.exists() and z0_p_path.exists():
         _, _, P_n_Z0, _ = load_data(directory_name, file_name_kappa_n_Z0, verbose=verbose)
         _, _, _, Q_p_Z0 = load_data(directory_name, file_name_kappa_p_Z0, verbose=verbose)
+        if P_n_Z0.shape[0] != P_n.shape[0] or Q_p_Z0.shape[0] != Q_p.shape[0]:
+            if verbose:
+                print(
+                    f"[INFO] Z=0 reference files are stale (sample count {P_n_Z0.shape[0]} "
+                    f"vs current {P_n.shape[0]}) — Fermi division plot will be skipped.\n"
+                    f"       Re-run with '--mode generate -v' to regenerate them at the current resolution."
+                )
+            P_n_Z0, Q_p_Z0 = None, None
     elif verbose:
         print(
             f"[INFO] Z=0 reference files not found — Fermi division plot will be skipped.\n"
@@ -1509,9 +1629,9 @@ def calc_double_beta_decay_spectrum(config, cnf):
     E_numeric = lambda Ee: E_function(Ee, Z, A, data)
 
     # ========== SAVE DATA FILES (always written) ==========
-    save_fermi_function(Q, Z, A, Fermi_numeric, E_numeric, data_files_directory, potential_index)
+    save_fermi_function(Q, Z, A, Fermi_numeric, E_numeric, data_files_directory, potential_index, verbose=verbose)
     save_triple_differential_grid(Q, Fermi_numeric, E_numeric, nuclear_matrix_elements,
-                                   data_files_directory, potential_index, Z, A)
+                                   data_files_directory, potential_index, Z, A, verbose=verbose)
 
     plots = config.get("plots", ["gf", "fermi", "epsilon", "double_diff"])
     if plots:
@@ -1537,16 +1657,18 @@ def calc_double_beta_decay_spectrum(config, cnf):
                                          phase_space_data, verbose=verbose)
 
     # ========== COMPUTE WEIGHTED ANGULAR CORRELATION ==========
-    print("\nComputing decay-rate-weighted ⟨κ²ν⟩ at three truncation orders...")
+    if verbose:
+        print("\nComputing decay-rate-weighted ⟨κ²ν⟩ at three truncation orders...")
     kappa_results = compute_kappa_weighted_average(Q, Fermi_numeric, E_numeric,
                                                     nuclear_matrix_elements, phase_space_data)
-    print(f"  ⟨κ²ν⟩ LO            = {kappa_results['kappa_LO']:.6e}")
-    print(f"  ⟨κ²ν⟩ 1st           = {kappa_results['kappa_1st']:.6e}")
-    print(f"  ⟨κ²ν⟩ total (formula) = {kappa_results['kappa_total']:.6e}  (±{kappa_results['kappa_total_err']:.2e})"
-          f"   [Γ²ν from G0..G22 combination = {kappa_results['gamma_formula']:.6e}]")
-    print(f"  ⟨κ²ν⟩ total (direct)  = {kappa_results['kappa_direct']:.6e}  (±{kappa_results['kappa_direct_err']:.2e})"
-          f"   [Γ²ν from direct untagged integral = {kappa_results['gamma_direct']:.6e}]")
-    print(f"  Difference: κ {kappa_results['kappa_percent_diff']:+.6f}%,  Γ²ν {kappa_results['gamma_percent_diff']:+.6f}%")
+    if verbose:
+        print(f"  ⟨κ²ν⟩ LO            = {kappa_results['kappa_LO']:.6e}")
+        print(f"  ⟨κ²ν⟩ 1st           = {kappa_results['kappa_1st']:.6e}")
+        print(f"  ⟨κ²ν⟩ total (formula) = {kappa_results['kappa_total']:.6e}  (±{kappa_results['kappa_total_err']:.2e})"
+              f"   [Γ²ν from G0..G22 combination = {kappa_results['gamma_formula']:.6e}]")
+        print(f"  ⟨κ²ν⟩ total (direct)  = {kappa_results['kappa_direct']:.6e}  (±{kappa_results['kappa_direct_err']:.2e})"
+              f"   [Γ²ν from direct untagged integral = {kappa_results['gamma_direct']:.6e}]")
+        print(f"  Difference: κ {kappa_results['kappa_percent_diff']:+.6f}%,  Γ²ν {kappa_results['gamma_percent_diff']:+.6f}%")
 
     # ========== CALCULATE HALF-LIVES ==========
     MGT1 = nuclear_matrix_elements["MGT1"]
@@ -1558,7 +1680,7 @@ def calc_double_beta_decay_spectrum(config, cnf):
     # ========== CALCULATE AND PLOT TRIPLE-DIFFERENTIAL SPECTRUM ==========
     if "double_diff" in plots:
         calculate_and_plot_double_differential_spectrum(Q, Z, A, Fermi_analytic, Fermi_numeric,
-                                                        E_numeric, plots_output_directory, potential_index, nuclear_matrix_elements, config['isotope'], phase_space_data)
+                                                        E_numeric, plots_output_directory, potential_index, nuclear_matrix_elements, config['isotope'], phase_space_data, verbose=verbose)
 
     # ========== CALCULATE AND PLOT SPECTRA ==========
     spectrum_data = None
@@ -1589,7 +1711,8 @@ def calc_double_beta_decay_spectrum(config, cnf):
         kappa_results=kappa_results,
     )
 
-    print(f"\nResults written to: {results_output_path}")
+    if verbose:
+        print(f"\nResults written to: {results_output_path}")
 
 
 

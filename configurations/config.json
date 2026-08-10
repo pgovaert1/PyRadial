@@ -1,16 +1,6 @@
 {
 
-
- "interaction" : "2nbb",
  "isotope" : "Xe136",
- "nuclear_model" : "QRPA_Simko_2018",
- "transition" : ["GT"],
- "electrostatic_potential_model" : "Analytical",
- "ho_correction": [],
- "bin_size [keV]" : 10,
-
-
-
 
 "parameters":{
 	"mass_number": 136,
@@ -35,9 +25,6 @@
 	},
 
 "paths":{
-        "output_file": "Test.npz",
-		"output_results_file": "results.txt",
-		"plot_directory": "plots",
         "output_directory": "output"
         }
 }
