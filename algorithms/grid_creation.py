@@ -27,6 +27,7 @@ def find_x(A_grid, x_min = 1e-10):
     """
 
     def f(x):
+        """RADIAL eq. 8.10, shifted so its positive root is the target x value."""
         return (x+1.0) * (1.0 - x * np.log((x + 1.0) / x)) - A_grid
 
     x_max = 1.0/(1.0 - A_grid)
@@ -81,6 +82,7 @@ def radial_grid(r_END, A_grid, N, r2, DRN, nuc_radius):
     d = 1 - b * np.log(c)
 
     def G(r):
+        """Map a radial coordinate r to its target grid-point index (inverted below via bisection)."""
         return a * r + b * np.log(c + r) + d
 
     r = np.zeros(N)
@@ -206,6 +208,7 @@ def plot_grid_stepsize(output_dir="output"):
     d = 1.0 - b * np.log(c)
 
     def G(r):
+        """Map a radial coordinate r to its target grid-point index (inverted below via dense interpolation)."""
         return a * r + b * np.log(c + r) + d
 
     # Invert G via dense interpolation — no bisection loop needed
