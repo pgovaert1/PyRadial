@@ -121,7 +121,7 @@ def radial_grid(r_END, A_grid, N, r2, DRN, nuc_radius):
 ### Find mminimum range up to which to extend the mesh range used to solve P and Q
 ###################################################################################
 
-def obtain_mesh_range(k, Z, R_au, potential_index, phi_r, potential_function):
+def obtain_mesh_range(k, Z, R_au, potential_index, phi_r, potential_function, verbose=False):
     """
     Find the minimum range needed such that a matching radius rc is included in the radial grid.
     Extending the radial point r_max until asymptotic condition |rV(r) - Z| < EPSILON is satisfied
@@ -141,6 +141,8 @@ def obtain_mesh_range(k, Z, R_au, potential_index, phi_r, potential_function):
         Function phi(r) used in the Thomas-Fermi screening potential.
     potential_function : callable
         Function returning the potential corresponding to potential_index
+    verbose : bool
+        If True, print the resolved mesh range.
 
     Returns
     -------
@@ -164,7 +166,8 @@ def obtain_mesh_range(k, Z, R_au, potential_index, phi_r, potential_function):
         r_max *= 2
         RV = r_max* potential_function(r_max, Z, R_au, potential_index, phi_r)
 
-    print(f"mesh range set to {r_max}")
+    if verbose:
+        print(f"mesh range set to {r_max}")
 
     return r_max
 
@@ -174,13 +177,19 @@ def obtain_mesh_range(k, Z, R_au, potential_index, phi_r, potential_function):
 ### Find_rc is a function finding the matching radius rc at which one can normalize the power series by matching it witht he asymptotic behavior
 #################################################################################################################################################
 
-def plot_grid_stepsize():
+def plot_grid_stepsize(output_dir="output"):
     """
     Plot iteration index vs grid step size for a demonstration grid.
     Shows the transition from logarithmic (near-origin) to linear (far-field)
-    spacing of the RADIAL-style mesh. For thesis illustration only.
+    spacing of the RADIAL-style mesh.
+
+    Parameters
+    ----------
+    output_dir : str or Path
+        Directory the demo plot is saved to.
     """
     import matplotlib.pyplot as plt
+    from pathlib import Path
 
     # Demo parameters — A_grid is derived from these, matching the real code formula
     N     = 1000   # number of grid points
@@ -235,7 +244,9 @@ def plot_grid_stepsize():
     ax.indicate_inset_zoom(ax_in, edgecolor='grey')
 
     plt.tight_layout()
-    plt.savefig('grid_stepsize_demo.pdf', bbox_inches='tight')
+    out_path = Path(output_dir)
+    out_path.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path / 'grid_stepsize_demo.pdf', bbox_inches='tight')
     plt.show()
 
 

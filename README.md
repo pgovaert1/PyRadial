@@ -122,4 +122,8 @@ Each potential has a matching FORTRAN reference directory (`out_fortran`, `fortr
 
 ## Status
 
-This is research code developed for an ongoing Master's thesis; there is no automated test suite or linter configured. Some numerical issues are under active investigation — see `CLAUDE.md` for developer-facing implementation notes and known caveats.
+This is research code developed for an ongoing Master's thesis; there is no automated test suite or linter configured.
+
+## License
+
+Released under the [MIT License](LICENSE).

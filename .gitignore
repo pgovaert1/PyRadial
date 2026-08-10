@@ -2,6 +2,7 @@
 *.pdf
 *.npz
 *.txt
+!requirements.txt
 *-swp
 # Ignore directories
 CLAUDE.md
@@ -10,6 +11,9 @@ fortran*
 out_fortran/
 plots/
 phase_space_results/
-test* 
+test*
 resolution_test
 __pycache__
+# Legacy scripts kept locally, no longer tracked
+Dirac_plot.py
+Numerical_radial_schrodinger.py
