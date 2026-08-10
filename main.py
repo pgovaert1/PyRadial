@@ -11,25 +11,71 @@ from configurations.isotopes import ISOTOPES
 
 
 def positive_float(value):
+    """
+    argparse type-check: parse `value` as a float and reject negative numbers.
+
+    Parameters
+    ----------
+    value : str
+        Raw CLI argument string.
+
+    Returns
+    -------
+    float
+        Parsed non-negative value.
+    """
     val = float(value)
     if val < 0:
         raise argparse.ArgumentTypeError("Kinetic energy must be >= 0")
     return val
 
 def positive_int(value):
+    """
+    argparse type-check: parse `value` as an int and reject negative numbers.
+
+    Parameters
+    ----------
+    value : str
+        Raw CLI argument string.
+
+    Returns
+    -------
+    int
+        Parsed non-negative value.
+    """
     val = int(value)
     if val < 0:
         raise argparse.ArgumentTypeError("Number must be positive")
     return val
 
 def clean_name(name):
+    """
+    argparse type-check: sanitize a user-supplied name for use as a directory name.
+
+    Strips leading/trailing whitespace and replaces internal spaces with underscores.
+
+    Parameters
+    ----------
+    name : str
+        Raw CLI argument string.
+
+    Returns
+    -------
+    str
+        Sanitized name safe to use as a directory component.
+    """
     name = name.strip()
     name = name.replace(" ", "_")
     return name
 
 
 def main():
-
+    """
+    CLI entry point. Reads `configurations/config.json` for defaults, applies
+    CLI argument overrides, builds the per-isotope `cnf` dict from
+    `configurations/isotopes.py`, and dispatches to the selected mode
+    (`generate`, `plot`, `data`, `all`, or the standalone `--G_comparison` action).
+    """
     with open("configurations/config.json") as f:
         config = json.load(f)
 
@@ -151,6 +197,7 @@ def main():
 
 
     def print_potential(potential_index):
+        """Print a one-line summary of which potential model and mode are running."""
         if potential_index == 0:
             print(f"calling '{mode}' function for potential 0: Z/r")
         elif potential_index == 1:

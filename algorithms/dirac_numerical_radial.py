@@ -244,6 +244,7 @@ def singular_power_series_terms(u_array, r_b, l ,Z , kappa, sigma):
         temp_mult_term = u1 - 2*C*r_b
 
         def recurance_terms(n,An,Bn):
+            """Compute the n-th Frobenius series coefficients (an, bn) from the recursion built up in An, Bn."""
             an = 1/(n * (2*s + n)) * (-u0 * An - (s + n + sigma * abs(kappa)) * Bn)
             bn = 1/(n * (2*s + n)) * ((s + n - sigma * abs(kappa)) * An - u0 * Bn)
 
@@ -919,10 +920,12 @@ def Normalization_Constant(grid_points, idx_rc, P_array, Q_array, Analytic_norma
         mult_term_subtraction = (Lambda * C**2 - kappa * W)
 
         def upper_Dirac_func(Coulomb_func, Coulomb_min_func):
+            """Combine a pair of Coulomb wave functions (F or G, with l=Lambda and l=Lambda-1) into the upper (large) analytic Dirac component."""
             return Analytic_normalization_const * ((kappa + Lambda) * mult_term_addition* Coulomb_func + Z_match/C * mult_term_subtraction * Coulomb_min_func)
 
 
         def lower_Dirac_func(Coulomb_func, Coulomb_min_func):
+            """Combine a pair of Coulomb wave functions (F or G, with l=Lambda and l=Lambda-1) into the lower (small) analytic Dirac component."""
             return - Analytic_normalization_const * (Z_match/C * mult_term_addition * Coulomb_func + (kappa + Lambda) * mult_term_subtraction * Coulomb_min_func)
 
         PIA = upper_Dirac_func(F_l, F_lm)
@@ -963,6 +966,28 @@ def Normalization_Constant(grid_points, idx_rc, P_array, Q_array, Analytic_norma
 # ========== Visualization of wavefunctions ==========
 
 def Visualize(config,cnf):
+    """
+    Solve the radial Dirac equation at a single plotting energy and plot the
+    resulting normalized P(r)/Q(r) wavefunctions. Entry point for `--mode plot`.
+
+    Builds the radial mesh and cubic-spline potential, solves the Frobenius
+    power series near the origin and the general power series out to the
+    matching radius r_c, normalizes against the analytic asymptotic Coulomb
+    (or Coulomb-like, for potential 3) solution, and plots P(r) and Q(r).
+
+    Parameters
+    ----------
+    config : dict
+        Runtime configuration (see `configurations/config.json`); must contain
+        `generator`, `mesh_grid`, and `verbose`/`plots` entries.
+    cnf : dict
+        Per-isotope parameters built by `main.py` (Z, A, angular_momentum_l, kappa).
+
+    Returns
+    -------
+    None
+        Displays (and optionally saves) a matplotlib figure as a side effect.
+    """
     ### DECLARE PARAMETERS
     verbose = config.get("verbose", False)
     A = cnf["A"]
@@ -1064,6 +1089,31 @@ def Visualize(config,cnf):
 
 
 def Generate_Fermi_Data(config,cnf):
+    """
+    Solve the radial Dirac equation over a range of electron energies and save
+    the resulting P/Q wavefunctions to disk. Entry point for `--mode generate`.
+
+    For each energy in the sampled range and each kappa sign (+1, -1), builds
+    the radial mesh and cubic-spline potential, solves the power series from
+    the origin to the matching radius r_c, normalizes against the analytic
+    asymptotic solution, and writes the P/Q arrays to a compressed `.npz` file
+    under `output/Dirac_<isotope>/NPZ_files/`. If `config["generate_z0"]` is
+    set, also generates the corresponding free-particle (V=0, Z=0) reference
+    wavefunctions used later for the Fermi-function division plot.
+
+    Parameters
+    ----------
+    config : dict
+        Runtime configuration (see `configurations/config.json`); must contain
+        `generator`, `mesh_grid`, `paths`, and `verbose`/`generate_z0` entries.
+    cnf : dict
+        Per-isotope parameters built by `main.py` (Z, A, Q, angular_momentum_l, kappa).
+
+    Returns
+    -------
+    None
+        Writes `.npz` wavefunction files to disk as a side effect.
+    """
     ### DECLARE PARAMETERS
     verbose = config.get("verbose", False)
     A = cnf["A"]
@@ -1121,6 +1171,7 @@ def Generate_Fermi_Data(config,cnf):
             gf.write("-" * 50 + "\n")
 
             def _row(i):
+                """Write one debug row (index, radial point, local step size) to the open grid.txt file."""
                 step = drs[i - 1] if i > 0 else float("nan")
                 gf.write(f"{i:>8}  {r[i]:>18.8e}  {step:>18.8e}\n")
 

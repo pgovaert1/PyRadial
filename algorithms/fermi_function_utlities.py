@@ -285,6 +285,37 @@ def Fermi(Ee, Z, A, rN):
 
 
 def _plot_wavefunction_component(Ee, numeric, analytic, ylabel, ylim, name, potential_label, output_dir, isotope):
+    """
+    Plot one Dirac wavefunction component (g or f) vs kinetic energy, numeric
+    only or numeric-vs-analytic with a %-difference subpanel, and save to disk.
+
+    Parameters
+    ----------
+    Ee : ndarray
+        Total energy grid (MeV).
+    numeric : ndarray
+        Numeric component values on `Ee`.
+    analytic : ndarray or None
+        Analytic (pure Coulomb) component values on `Ee`, or None to skip the
+        comparison panel (e.g. for potentials without an analytic solution).
+    ylabel : str
+        Y-axis label for the component being plotted.
+    ylim : float
+        Upper y-axis limit.
+    name : str
+        Component name ("g" or "f"), used in labels/filenames.
+    potential_label : str
+        Human-readable potential name, used in the title/filename.
+    output_dir : str or Path
+        Directory the figure is saved to.
+    isotope : str
+        Isotope name, used in the title/filename.
+
+    Returns
+    -------
+    None
+        Saves and displays a matplotlib figure as a side effect.
+    """
     T_kinetic = Ee - ME
     if analytic is not None:
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True, gridspec_kw={"height_ratios": [3, 1]})

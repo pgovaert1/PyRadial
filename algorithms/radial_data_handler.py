@@ -26,6 +26,24 @@ Gbeta = GF * VUD
 
 
 def _gamma_combination(G, xi31, xi51):
+    """
+    Combine the [G0, G2, G4, G22] phase-space factors into the Gamma-proportional
+    weighted sum used for the half-life (Gamma = GA^4 * MGT1^2 * this).
+
+    Parameters
+    ----------
+    G : sequence of float
+        [G0, G2, G4, G22] phase-space factors.
+    xi31 : float
+        Nuclear matrix element ratio MGT3/MGT1.
+    xi51 : float
+        Nuclear matrix element ratio MGT5/MGT1.
+
+    Returns
+    -------
+    float
+        G0 + xi31*G2 + (1/3)*xi31^2*G22 + ((1/3)*xi31^2 + xi51)*G4
+    """
     return G[0] + xi31*G[1] + 1/3*xi31**2*G[3] + (1/3*xi31**2 + xi51)*G[2]
 c2n = ME * (Gbeta * ME ** 2)**4 / (8 * np.pi**7)
 MeVtoyr = (365.25 * 24 * 3600) * 2.998e8 / (1e-15 * HBAR_C)
@@ -97,9 +115,11 @@ def calculate_phase_space_factors(Q, Fermi_analytic, Fermi_numeric, E_numeric, n
         Dictionary containing G_results, G_errors, G_results_num, G_errors_num, H_results_num, H_errors_num
     """
     def bounds_Ee1():
+        """nquad integration bounds for Ee1: the full kinematically allowed range."""
         return [ME, Q + ME]
-    
+
     def bounds_Ee2(Ee1):
+        """nquad integration bounds for Ee2 given Ee1, from the kinematic boundary Ee1+Ee2 <= Q+2*ME."""
         return [ME, Q + 2.0 * ME - Ee1]
 
     opts_Ee1 = {"epsabs": 1e-18, "epsrel": 1e-16, "limit": 50000, "points": [ME, Q/2 + ME, Q + ME]}
@@ -276,14 +296,17 @@ def compute_and_compare_total_gamma(Q, Fermi_numeric, E_numeric, nuclear_matrix_
     gamma_ps = _gamma_combination(G_num, xi31, xi51)
 
     def integrand(cos_theta, Ee2, Ee1):
+        """nquad integrand: the triple-differential spectrum kernel dGamma/(dEe1 dEe2 d(cos theta))."""
         return double_differential_spectrum_kernel(
             Ee1, Ee2, cos_theta, Q, Fermi_numeric, E_numeric, nuclear_matrix_elements
         )
 
     def bounds_cos_theta(Ee2, Ee1):
+        """nquad integration bounds for cos(theta): the full physical range."""
         return [-1.0, 1.0]
 
     def bounds_Ee2(Ee1):
+        """nquad integration bounds for Ee2 given Ee1, from the kinematic boundary Ee1+Ee2 <= Q+2*ME."""
         return [ME, Q + 2.0 * ME - Ee1]
 
     bounds_Ee1 = [ME, Q + ME]
@@ -380,6 +403,7 @@ def compute_kappa_weighted_average(Q, Fermi_numeric, E_numeric, nuclear_matrix_e
     gamma_formula = _gamma_combination(G, xi31, xi51)
 
     def bounds_Ee2(Ee1):
+        """nquad integration bounds for Ee2 given Ee1, from the kinematic boundary Ee1+Ee2 <= Q+2*ME."""
         return [ME, Q + 2.0 * ME - Ee1]
 
     bounds_Ee1 = [ME, Q + ME]
@@ -1502,14 +1526,13 @@ def write_results_to_file(results_output_path, config, potential_index, Z, A, G_
         f.write(f"Experimental:           {TLIT:.6e} yr\n\n")
 
         # ========== Decay rates ==========
-        if total_rate is not None:
-            f.write("DECAY RATES FROM ε-SPECTRUM\n")
-            f.write("-" * 40 + "\n")
-            f.write(f"Analytic:  {1/total_rate:.6e} ± {total_err:.6e} yr\n")
+        f.write("DECAY RATES FROM ε-SPECTRUM\n")
+        f.write("-" * 40 + "\n")
+        if total_rate_num is not None:
+            if total_rate is not None:
+                f.write(f"Analytic:  {1/total_rate:.6e} ± {total_err:.6e} yr\n")
             f.write(f"Numeric:   {1/total_rate_num:.6e} ± {total_err_num:.6e} yr\n")
         else:
-            f.write("DECAY RATES FROM ε-SPECTRUM\n")
-            f.write("-" * 40 + "\n")
             f.write("Not computed (epsilon spectrum was not selected).\n")
 
         # ========== Angular correlation ==========
